@@ -429,10 +429,10 @@ class JARVISAssistant:
         return response
     
     def handle_system_operations(self, command: str) -> str:
-        """Handle system operations with full access"""
+        """Handle system operations with full access and natural language processing"""
         command_lower = command.lower()
+        
         # Skip email commands - they should be handled by Gmail handler
-        # Be more specific to avoid false positives
         email_operations = [
             "check emails", "fetch emails", "get emails", "show emails", "list emails",
             "send email", "reply to", "respond to", "write email", "compose email",
@@ -442,71 +442,203 @@ class JARVISAssistant:
         if any(op in command_lower for op in email_operations):
             return None
         
-        # File system operations - comprehensive keywords
-        file_keywords = [
-            "files", "file", "documents", "folder", "folders", "directory", "directories", "data", "content",
-            "list", "show", "display", "read", "find", "search", "look", "browse", "explore",
-            "downloads", "desktop", "documents", "pictures", "music", "videos", "user", "profile",
-            "my files", "my folders", "my documents", "my downloads", "my desktop",
-            "file system", "file manager", "navigate", "what files", "what folders", "what's in",
-            "show me files", "show me folders", "list files", "list folders", "list contents",
-            "read folder", "read directory", "read entire folder", "read entire directory",
-            "user profile", "home directory", "user directory", "my stuff", "my data"
+        # Convert natural language to system commands
+        system_command = self._convert_to_system_command(command_lower)
+        if not system_command:
+            return None
+        
+        try:
+            from system_manager import JARVISSystemIntegration
+            system = JARVISSystemIntegration()
+            result = system.handle_system_command(system_command)
+            if result:
+                return result
+            else:
+                # If system manager didn't handle it, continue to AI
+                pass
+        except Exception as e:
+            return f"System operation error: {e}"
+    
+    def _convert_to_system_command(self, command_lower: str) -> str:
+        """Convert natural language requests to specific system commands"""
+        
+        # File listing patterns
+        if any(word in command_lower for word in ["list", "show", "display", "what files", "what's in"]) or \
+           any(phrase in command_lower for phrase in ["my downloads", "my desktop", "my documents", "my pictures", "my music", "my videos"]):
+            # Extract directory from command
+            directory = self._extract_directory(command_lower)
+            if directory:
+                return f"list files in {directory}"
+            else:
+                return "list files"
+        
+        # File reading patterns
+        elif any(word in command_lower for word in ["read", "open", "view", "see content"]):
+            # Extract file path from command
+            file_path = self._extract_file_path(command_lower)
+            if file_path:
+                return f"read file {file_path}"
+            else:
+                return None
+        
+        # File search patterns
+        elif any(word in command_lower for word in ["search", "find", "look for"]):
+            # Extract search term from command
+            search_term = self._extract_search_term(command_lower)
+            if search_term:
+                return f"search files {search_term}"
+            else:
+                return None
+        
+        # System status patterns
+        elif any(word in command_lower for word in ["system status", "computer status", "how's my computer", "system info"]):
+            return "system status"
+        
+        # CPU usage patterns
+        elif any(word in command_lower for word in ["cpu usage", "cpu", "processor", "how much cpu"]):
+            return "cpu usage"
+        
+        # Memory usage patterns
+        elif any(word in command_lower for word in ["memory usage", "memory", "ram", "how much memory"]):
+            return "memory usage"
+        
+        # Running processes patterns
+        elif any(word in command_lower for word in ["running processes", "processes", "what's running", "active processes"]):
+            return "running processes"
+        
+        # User profile patterns
+        elif any(word in command_lower for word in ["user profile", "my profile", "profile", "user info"]):
+            return "user profile"
+        
+        # PowerShell patterns
+        elif any(word in command_lower for word in ["powershell", "ps", "run command"]):
+            # Extract command after powershell/ps
+            ps_command = self._extract_powershell_command(command_lower)
+            if ps_command:
+                return f"powershell {ps_command}"
+            else:
+                return "powershell"
+        
+        # CMD patterns
+        elif any(word in command_lower for word in ["cmd", "command", "run cmd"]):
+            # Extract command after cmd
+            cmd_command = self._extract_cmd_command(command_lower)
+            if cmd_command:
+                return f"cmd {cmd_command}"
+            else:
+                return "cmd"
+        
+        return None
+    
+    def _extract_directory(self, command_lower: str) -> str:
+        """Extract directory name from natural language command"""
+        # Common directory mappings
+        directory_mappings = {
+            "download": "download",
+            "downloads": "download", 
+            "desktop": "desktop",
+            "documents": "documents",
+            "pictures": "pictures",
+            "music": "music",
+            "videos": "videos",
+            "my files": "documents",
+            "my downloads": "download",
+            "my desktop": "desktop",
+            "my documents": "documents",
+            "my pictures": "pictures",
+            "my music": "music",
+            "my videos": "videos"
+        }
+        
+        # Look for directory keywords
+        for keyword, directory in directory_mappings.items():
+            if keyword in command_lower:
+                return directory
+        
+        # Look for "in [directory]" or "from [directory]" patterns
+        import re
+        patterns = [
+            r"in\s+(\w+)",
+            r"from\s+(\w+)",
+            r"my\s+(\w+)",
+            r"the\s+(\w+)"
         ]
         
-        # Check for specific file operations patterns
-        file_operation_patterns = [
-            "list files in", "list files from", "show files in", "show files from",
-            "files in", "files from", "list in", "list from", "show in", "show from",
-            "what files in", "what files from", "what's in", "what's from"
-        ]
-        
-        # Check if this is a file operation command
-        is_file_operation = (
-            any(keyword in command_lower for keyword in file_keywords) or 
-            any(pattern in command_lower for pattern in file_operation_patterns)
-        )
-        
-        if is_file_operation:
-            try:
-                from system_manager import JARVISSystemIntegration
-                system = JARVISSystemIntegration()
-                result = system.handle_system_command(command)
-                if result:
-                    return result
+        for pattern in patterns:
+            match = re.search(pattern, command_lower)
+            if match:
+                dir_name = match.group(1)
+                if dir_name in directory_mappings:
+                    return directory_mappings[dir_name]
                 else:
-                    # If system manager didn't handle it, continue to AI
-                    pass
-            except Exception as e:
-                return f"System operation error: {e}"
+                    return dir_name
         
-        # System monitoring - be flexible
-        system_keywords = [
-            "system", "computer", "pc", "machine", "status", "health", "performance", "monitor",
-            "cpu", "memory", "ram", "processes", "running", "task", "manager", "resource", "usage"
+        return None
+    
+    def _extract_file_path(self, command_lower: str) -> str:
+        """Extract file path from natural language command"""
+        import re
+        # Look for file paths or file names
+        patterns = [
+            r"file\s+([^\s]+)",
+            r"read\s+([^\s]+)",
+            r"open\s+([^\s]+)",
+            r"view\s+([^\s]+)"
         ]
         
-        if any(keyword in command_lower for keyword in system_keywords):
-            try:
-                from system_manager import JARVISSystemIntegration
-                system = JARVISSystemIntegration()
-                return system.handle_system_command(command)
-            except Exception as e:
-                return f"System monitoring error: {e}"
+        for pattern in patterns:
+            match = re.search(pattern, command_lower)
+            if match:
+                return match.group(1)
         
-        # File operations - be flexible
-        file_ops_keywords = [
-            "read", "write", "create", "edit", "modify", "delete", "remove", "search", "find", "organize",
-            "sort", "arrange", "manage", "handle", "work", "process", "file", "files", "document", "documents"
+        return None
+    
+    def _extract_search_term(self, command_lower: str) -> str:
+        """Extract search term from natural language command"""
+        import re
+        # Look for search terms after "search", "find", "look for"
+        patterns = [
+            r"search\s+(?:for\s+)?(.+)",
+            r"find\s+(?:the\s+)?(.+)",
+            r"look\s+for\s+(.+)"
         ]
         
-        if any(keyword in command_lower for keyword in file_ops_keywords):
-            try:
-                from system_manager import JARVISSystemIntegration
-                system = JARVISSystemIntegration()
-                return system.handle_system_command(command)
-            except Exception as e:
-                return f"File operation error: {e}"
+        for pattern in patterns:
+            match = re.search(pattern, command_lower)
+            if match:
+                return match.group(1).strip()
+        
+        return None
+    
+    def _extract_powershell_command(self, command_lower: str) -> str:
+        """Extract PowerShell command from natural language"""
+        import re
+        patterns = [
+            r"powershell\s+(.+)",
+            r"ps\s+(.+)",
+            r"run\s+command\s+(.+)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, command_lower)
+            if match:
+                return match.group(1).strip()
+        
+        return None
+    
+    def _extract_cmd_command(self, command_lower: str) -> str:
+        """Extract CMD command from natural language"""
+        import re
+        patterns = [
+            r"cmd\s+(.+)",
+            r"command\s+(.+)",
+            r"run\s+cmd\s+(.+)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, command_lower)
+            if match:
+                return match.group(1).strip()
         
         return None
     

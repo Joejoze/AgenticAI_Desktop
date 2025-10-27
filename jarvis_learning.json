@@ -47,6 +47,32 @@
     {
       "directory": "show files in documents",
       "timestamp": "2025-10-27T18:47:31.237201"
+    },
+    {
+      "directory": "show files in desktop",
+      "timestamp": "2025-10-27T19:59:44.136615"
+    },
+    {
+      "directory": "what files in documents",
+      "timestamp": "2025-10-27T19:59:44.157188"
+    },
+    {
+      "directory": "my downloads",
+      "timestamp": "2025-10-27T19:59:44.171047"
+    }
+  ],
+  "system_preferences": [
+    {
+      "command": "system status",
+      "timestamp": "2025-10-27T19:59:44.225367"
+    },
+    {
+      "command": "cpu usage",
+      "timestamp": "2025-10-27T19:59:44.380070"
+    },
+    {
+      "command": "memory usage",
+      "timestamp": "2025-10-27T19:59:45.391155"
     }
   ]
 }
