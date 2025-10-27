@@ -357,19 +357,19 @@ class JARVISAssistant:
         # Load learning data
         self.load_learning_data()
         
-        # Process through memory system
-        memory_result = self.memory_workflow({
-            "content": command.content,
-            "source": command.source,
-            "timestamp": command.timestamp.isoformat()
-        })
-        
-        # Check for system/file operations first
+        # Check for system/file operations FIRST - before any AI processing
         system_response = self.handle_system_operations(command.content)
         if system_response:
             # Learn from this interaction
             self.learn_from_interaction(command, system_response)
             return system_response
+        
+        # Process through memory system only if not a system operation
+        memory_result = self.memory_workflow({
+            "content": command.content,
+            "source": command.source,
+            "timestamp": command.timestamp.isoformat()
+        })
         
         # Handle Gmail commands before AI generation - be more specific
         email_keywords = [
@@ -431,14 +431,15 @@ class JARVISAssistant:
     def handle_system_operations(self, command: str) -> str:
         """Handle system operations with full access"""
         command_lower = command.lower()
-        
         # Skip email commands - they should be handled by Gmail handler
-        email_keywords = [
-            "email", "emails", "gmail", "mail", "message", "messages", "inbox", "check", "fetch", "get", "show", "list",
-            "send", "reply", "respond", "write", "compose", "inbox", "mailbox", "correspondence", "communication"
+        # Be more specific to avoid false positives
+        email_operations = [
+            "check emails", "fetch emails", "get emails", "show emails", "list emails",
+            "send email", "reply to", "respond to", "write email", "compose email",
+            "email from", "message from", "mail from"
         ]
         
-        if any(keyword in command_lower for keyword in email_keywords):
+        if any(op in command_lower for op in email_operations):
             return None
         
         # File system operations - comprehensive keywords
@@ -453,11 +454,29 @@ class JARVISAssistant:
             "user profile", "home directory", "user directory", "my stuff", "my data"
         ]
         
-        if any(keyword in command_lower for keyword in file_keywords):
+        # Check for specific file operations patterns
+        file_operation_patterns = [
+            "list files in", "list files from", "show files in", "show files from",
+            "files in", "files from", "list in", "list from", "show in", "show from",
+            "what files in", "what files from", "what's in", "what's from"
+        ]
+        
+        # Check if this is a file operation command
+        is_file_operation = (
+            any(keyword in command_lower for keyword in file_keywords) or 
+            any(pattern in command_lower for pattern in file_operation_patterns)
+        )
+        
+        if is_file_operation:
             try:
                 from system_manager import JARVISSystemIntegration
                 system = JARVISSystemIntegration()
-                return system.handle_system_command(command)
+                result = system.handle_system_command(command)
+                if result:
+                    return result
+                else:
+                    # If system manager didn't handle it, continue to AI
+                    pass
             except Exception as e:
                 return f"System operation error: {e}"
         
@@ -1093,14 +1112,14 @@ class JARVISAssistant:
                 print("\nJARVIS: Goodbye!")
                 break
             except Exception as e:
-                print(f"\n❌ Error: {e}")
+                print(f"\n[ERROR] Error: {e}")
 
 def main():
     """Main entry point"""
     try:
         jarvis = JARVISAssistant()
         
-        print("🚀 Starting JARVIS AI Assistant...")
+        print("[STARTUP] Starting JARVIS AI Assistant...")
         print("Choose mode:")
         print("1. Chat Mode")
         print("2. Telegram Bot")
@@ -1122,7 +1141,7 @@ def main():
             
     except Exception as e:
         logger.error(f"JARVIS startup error: {e}")
-        print(f"❌ Error starting JARVIS: {e}")
+        print(f"[ERROR] Error starting JARVIS: {e}")
 
 if __name__ == "__main__":
     main()

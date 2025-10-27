@@ -44,10 +44,10 @@ def initialize_jarvis():
             with st.spinner("Initializing JARVIS..."):
                 st.session_state.jarvis = JARVISAssistant()
                 st.session_state.system_integration = JARVISSystemIntegration()
-            st.success("✅ JARVIS initialized successfully!")
+            st.success("[SUCCESS] JARVIS initialized successfully!")
         return True
     except Exception as e:
-        st.error(f"❌ Failed to initialize JARVIS: {e}")
+        st.error(f"[ERROR] Failed to initialize JARVIS: {e}")
         return False
 
 def get_or_create_session():

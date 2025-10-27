@@ -212,9 +212,9 @@ if __name__ == "__main__":
     
     emails = fetch_recent_emails(get_service(), max_results=10)
     if not emails:
-        print("📭 No messages found.")
+        print("[INFO] No messages found.")
     else:
-        print(f"📧 Found {len(emails)} emails to process...")
+        print(f"[EMAIL] Found {len(emails)} emails to process...")
         for email in emails:
             classification, action = process_email(email)
             print("="*70)

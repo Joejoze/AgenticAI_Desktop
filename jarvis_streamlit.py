@@ -43,10 +43,10 @@ def initialize_jarvis():
             with st.spinner("Initializing JARVIS..."):
                 st.session_state.jarvis = JARVISAssistant()
                 st.session_state.system_integration = JARVISSystemIntegration()
-            st.success("✅ JARVIS initialized successfully!")
+            st.success("[SUCCESS] JARVIS initialized successfully!")
         return True
     except Exception as e:
-        st.error(f"❌ Failed to initialize JARVIS: {e}")
+        st.error(f"[ERROR] Failed to initialize JARVIS: {e}")
         return False
 
 def auto_initialize():
@@ -121,9 +121,9 @@ def handle_special_commands(user_input: str) -> str:
         
         elif command_lower == "status":
             status_info = []
-            status_info.append(f"JARVIS: {'✅ Ready' if st.session_state.jarvis else '❌ Not initialized'}")
-            status_info.append(f"Gmail: {'✅ Connected' if st.session_state.connected else '❌ Not connected'}")
-            status_info.append(f"Voice: {'✅ Available' if st.session_state.jarvis and st.session_state.jarvis.voice_enabled else '❌ Not available'}")
+            status_info.append(f"JARVIS: {'[READY] Ready' if st.session_state.jarvis else '[OFFLINE] Not initialized'}")
+            status_info.append(f"Gmail: {'[CONNECTED] Connected' if st.session_state.connected else '[DISCONNECTED] Not connected'}")
+            status_info.append(f"Voice: {'[AVAILABLE] Available' if st.session_state.jarvis and st.session_state.jarvis.voice_enabled else '[UNAVAILABLE] Not available'}")
             status_info.append(f"Chat History: {len(st.session_state.chat_history)} messages")
             return "\n".join(status_info)
         
@@ -146,16 +146,16 @@ with col1:
 with col2:
     # Compact status display
     if st.session_state.jarvis:
-        st.success("✅ JARVIS Ready")
+        st.success("[READY] JARVIS Ready")
     else:
-        st.error("❌ JARVIS Offline")
+        st.error("[OFFLINE] JARVIS Offline")
     
     if st.session_state.connected:
-        st.success("📧 Gmail Connected")
+        st.success("[CONNECTED] Gmail Connected")
     else:
-        st.info("📧 Gmail Disconnected")
+        st.info("[DISCONNECTED] Gmail Disconnected")
     
-    st.info(f"💬 {len(st.session_state.chat_history)} Messages")
+    st.info(f"[MESSAGES] {len(st.session_state.chat_history)} Messages")
 
 # Quick actions
 st.markdown("### 🚀 Quick Actions")
@@ -266,13 +266,13 @@ with st.sidebar:
         try:
             service = get_service()
             st.session_state.connected = True
-            st.success("✅ Gmail connected!")
+            st.success("[SUCCESS] Gmail connected!")
         except Exception as e:
-            st.error(f"❌ Gmail connection failed: {e}")
+            st.error(f"[ERROR] Gmail connection failed: {e}")
     
     if st.button("Disconnect Gmail"):
         st.session_state.connected = False
-        st.success("📧 Gmail disconnected")
+        st.success("[DISCONNECTED] Gmail disconnected")
     
     # Voice controls
     st.subheader("🎤 Voice")

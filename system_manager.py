@@ -563,33 +563,51 @@ class JARVISSystemIntegration:
             else:
                 return f"Organized {result['moved_files']} files into folders"
         
-        elif command_lower.startswith("list files") or command_lower.startswith("ls ") or "files in" in command_lower:
-            # Handle "list files", "ls", or "files in" commands
-            if command_lower.startswith("list files "):
+        elif (command_lower.startswith("list files") or command_lower.startswith("ls ") or 
+              "files in" in command_lower or "list files in" in command_lower or 
+              "show files in" in command_lower or "what files in" in command_lower):
+            # Handle various file listing commands
+            directory = None
+            
+            # Extract directory from different patterns
+            if command_lower.startswith("list files in "):
+                directory = command[14:].strip()
+            elif command_lower.startswith("list files "):
                 directory = command[11:].strip()
+            elif command_lower.startswith("show files in "):
+                directory = command[14:].strip()
             elif command_lower.startswith("ls "):
                 directory = command[3:].strip()
             elif "files in " in command_lower:
                 directory = command[command_lower.find("files in ") + 9:].strip()
-            else:
-                directory = None
+            elif "what files in" in command_lower:
+                directory = command[command_lower.find("what files in") + 13:].strip()
             
             # Handle special directories
-            if directory and directory.lower() in ["downloads", "download", "in downloads"]:
+            if directory and directory.lower() in ["downloads", "download", "in downloads", "downloads folder"]:
                 downloads_path = Path.home() / "Downloads"
                 directory = str(downloads_path)
-            elif directory and directory.lower() in ["documents", "docs", "in documents"]:
+            elif directory and directory.lower() in ["documents", "docs", "in documents", "documents folder"]:
                 docs_path = Path.home() / "Documents"
                 directory = str(docs_path)
-            elif directory and directory.lower() in ["desktop", "in desktop"]:
+            elif directory and directory.lower() in ["desktop", "in desktop", "desktop folder"]:
                 desktop_path = Path.home() / "Desktop"
                 directory = str(desktop_path)
+            elif directory and directory.lower() in ["pictures", "images", "photos"]:
+                pictures_path = Path.home() / "Pictures"
+                directory = str(pictures_path)
+            elif directory and directory.lower() in ["music", "songs"]:
+                music_path = Path.home() / "Music"
+                directory = str(music_path)
+            elif directory and directory.lower() in ["videos", "movies"]:
+                videos_path = Path.home() / "Videos"
+                directory = str(videos_path)
             
             results = self.file_manager.list_files(directory)
             if results and "error" not in results[0]:
                 result = f"Files in {directory or 'current directory'}:\n"
                 for file_info in results:
-                    file_type = "📁" if file_info['is_directory'] else "📄"
+                    file_type = "[DIR]" if file_info['is_directory'] else "[FILE]"
                     size_str = f"({file_info['size']} bytes)" if file_info['is_file'] else ""
                     result += f"{file_type} {file_info['name']} {size_str}\n"
                 return result
@@ -612,22 +630,22 @@ class JARVISSystemIntegration:
             
             results = self.file_manager.list_files(directory)
             if results and "error" not in results[0]:
-                result = f"📋 Complete file list for {directory}:\n\n"
+                result = f"Complete file list for {directory}:\n\n"
                 files = [f for f in results if f['is_file']]
                 directories = [f for f in results if f['is_directory']]
                 
                 if directories:
-                    result += "📁 Directories:\n"
+                    result += "[DIRECTORIES]:\n"
                     for dir_info in directories:
-                        result += f"  📁 {dir_info['name']}\n"
+                        result += f"  [DIR] {dir_info['name']}\n"
                     result += "\n"
                 
                 if files:
-                    result += f"📄 Files ({len(files)} total):\n"
+                    result += f"[FILES] ({len(files)} total):\n"
                     for file_info in files:
                         size_mb = file_info['size'] / (1024 * 1024)
                         size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{file_info['size']} bytes"
-                        result += f"  📄 {file_info['name']} ({size_str})\n"
+                        result += f"  [FILE] {file_info['name']} ({size_str})\n"
                 
                 return result
             else:
@@ -657,9 +675,9 @@ class JARVISSystemIntegration:
             if "error" in folder_data:
                 return f"Error reading folder: {folder_data['error']}"
             
-            result = f"📁 Complete folder structure for {directory}:\n\n"
-            result += f"📊 Summary: {folder_data['total_files']} files, {folder_data['total_directories']} directories\n"
-            result += f"💾 Total size: {folder_data['total_size'] / (1024 * 1024):.2f} MB\n\n"
+            result = f"Complete folder structure for {directory}:\n\n"
+            result += f"Summary: {folder_data['total_files']} files, {folder_data['total_directories']} directories\n"
+            result += f"Total size: {folder_data['total_size'] / (1024 * 1024):.2f} MB\n\n"
             
             # Organize by depth
             by_depth = {}
@@ -674,11 +692,11 @@ class JARVISSystemIntegration:
                 indent = "  " * depth
                 for item in by_depth[depth]:
                     if item['is_directory']:
-                        result += f"{indent}📁 {item['name']}/\n"
+                        result += f"{indent}[DIR] {item['name']}/\n"
                     else:
                         size_mb = item['size'] / (1024 * 1024)
                         size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{item['size']} bytes"
-                        result += f"{indent}📄 {item['name']} ({size_str})\n"
+                        result += f"{indent}[FILE] {item['name']} ({size_str})\n"
             
             return result
         
@@ -694,9 +712,9 @@ class JARVISSystemIntegration:
             
             result = self.controller.execute_powershell_command(ps_command)
             if result.get("success"):
-                return f"✅ PowerShell Command Executed:\n{result['stdout']}"
+                return f"[SUCCESS] PowerShell Command Executed:\n{result['stdout']}"
             else:
-                return f"❌ PowerShell Command Failed:\n{result.get('error', 'Unknown error')}\n{result.get('stderr', '')}"
+                return f"[ERROR] PowerShell Command Failed:\n{result.get('error', 'Unknown error')}\n{result.get('stderr', '')}"
         
         elif command_lower.startswith("cmd ") or command_lower.startswith("command "):
             # Handle CMD commands
@@ -707,9 +725,9 @@ class JARVISSystemIntegration:
             
             result = self.controller.execute_command(cmd_command)
             if result.get("success"):
-                return f"✅ Command Executed:\n{result['stdout']}"
+                return f"[SUCCESS] Command Executed:\n{result['stdout']}"
             else:
-                return f"❌ Command Failed:\n{result.get('error', 'Unknown error')}\n{result.get('stderr', '')}"
+                return f"[ERROR] Command Failed:\n{result.get('error', 'Unknown error')}\n{result.get('stderr', '')}"
         
         else:
             return "Unknown system command. Available: system status, cpu usage, memory usage, running processes, search files, read file, write file, organize files, list files, ls, read folder, user profile, powershell [command], cmd [command]"
@@ -721,10 +739,10 @@ class JARVISSystemIntegration:
             if "error" in profiles:
                 return f"Error getting user profiles: {profiles['error']}"
             
-            result = f"👤 User Profile Information:\n\n"
-            result += f"🏠 Home Directory: {profiles['user_home']}\n"
-            result += f"👤 Username: {profiles['username']}\n\n"
-            result += f"📁 Accessible Directories:\n"
+            result = f"[USER] User Profile Information:\n\n"
+            result += f"[HOME] Home Directory: {profiles['user_home']}\n"
+            result += f"[USER] Username: {profiles['username']}\n\n"
+            result += f"[DIR] Accessible Directories:\n"
             
             for name, path in profiles['accessible_directories'].items():
                 if path:
@@ -734,13 +752,13 @@ class JARVISSystemIntegration:
                             # Count files and directories
                             file_count = sum(1 for _ in path_obj.iterdir() if _.is_file())
                             dir_count = sum(1 for _ in path_obj.iterdir() if _.is_dir())
-                            result += f"  ✅ {name}: {path} ({file_count} files, {dir_count} directories)\n"
+                            result += f"  [OK] {name}: {path} ({file_count} files, {dir_count} directories)\n"
                         else:
-                            result += f"  ❌ {name}: {path} (does not exist)\n"
+                            result += f"  [MISSING] {name}: {path} (does not exist)\n"
                     except:
-                        result += f"  ❌ {name}: {path} (access denied)\n"
+                        result += f"  [DENIED] {name}: {path} (access denied)\n"
                 else:
-                    result += f"  ❌ {name}: Not available on this system\n"
+                    result += f"  [UNAVAILABLE] {name}: Not available on this system\n"
             
             return result
             

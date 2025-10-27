@@ -27,10 +27,10 @@ def gmail_service():
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                print("✅ Successfully refreshed expired token")
+                print("[SUCCESS] Successfully refreshed expired token")
             except Exception as e:
-                print(f"❌ Failed to refresh token: {e}")
-                print("🔄 Will re-authenticate...")
+                print(f"[ERROR] Failed to refresh token: {e}")
+                print("[INFO] Will re-authenticate...")
                 creds = None
         
         if not creds:
@@ -51,7 +51,7 @@ def gmail_service():
                     "credentials.json not found in project root. Please follow the setup instructions above."
                 )
             
-            print("🔐 Starting Gmail authentication...")
+            print("[AUTH] Starting Gmail authentication...")
             print("A browser window will open for Google OAuth consent.")
             flow = InstalledAppFlow.from_client_secrets_file(
                 "credentials.json",
@@ -59,12 +59,12 @@ def gmail_service():
             )
             # This will open a browser window for Google consent and capture token locally
             creds = flow.run_local_server(port=0)
-            print("✅ Authentication successful!")
+            print("[SUCCESS] Authentication successful!")
 
         # Save credentials
         with open("token.json", "w") as token:
             token.write(creds.to_json())
-        print("💾 Credentials saved to token.json")
+        print("[SAVE] Credentials saved to token.json")
 
     return build("gmail", "v1", credentials=creds)
 
