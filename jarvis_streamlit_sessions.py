@@ -69,6 +69,25 @@ def save_message(session_id: str, role: str, content: str, metadata: Dict = None
 def render_sidebar():
     """Render the sidebar with chat sessions"""
     with st.sidebar:
+                # Session management
+        st.subheader("⚙️ Session Settings")
+        
+        current_session = chat_db.get_active_session()
+        if current_session:
+            new_name = st.text_input(
+                "Rename current session:",
+                value=current_session['name'],
+                key="rename_input"
+            )
+            
+            if st.button("✏️ Rename", use_container_width=True):
+                if new_name and new_name != current_session['name']:
+                    if chat_db.rename_session(current_session['id'], new_name):
+                        st.success("Session renamed!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to rename session")
+
         st.title("💬 Chat Sessions")
         
         # New chat button
@@ -123,24 +142,7 @@ def render_sidebar():
         
         st.divider()
         
-        # Session management
-        st.subheader("⚙️ Session Settings")
-        
-        current_session = chat_db.get_active_session()
-        if current_session:
-            new_name = st.text_input(
-                "Rename current session:",
-                value=current_session['name'],
-                key="rename_input"
-            )
-            
-            if st.button("✏️ Rename", use_container_width=True):
-                if new_name and new_name != current_session['name']:
-                    if chat_db.rename_session(current_session['id'], new_name):
-                        st.success("Session renamed!")
-                        st.rerun()
-                    else:
-                        st.error("Failed to rename session")
+
 
 def render_chat_interface():
     """Render the main chat interface"""

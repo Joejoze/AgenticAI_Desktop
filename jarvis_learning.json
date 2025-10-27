@@ -59,6 +59,26 @@
     {
       "directory": "my downloads",
       "timestamp": "2025-10-27T19:59:44.171047"
+    },
+    {
+      "directory": "files in desktop",
+      "timestamp": "2025-10-27T20:11:35.432973"
+    },
+    {
+      "directory": "list files in my desktop",
+      "timestamp": "2025-10-27T20:12:59.756515"
+    },
+    {
+      "directory": "list files in my documents",
+      "timestamp": "2025-10-27T20:17:45.300010"
+    },
+    {
+      "directory": "list my files in downloads",
+      "timestamp": "2025-10-27T20:48:24.641553"
+    },
+    {
+      "directory": "in downloads",
+      "timestamp": "2025-10-27T20:48:52.821572"
     }
   ],
   "system_preferences": [
@@ -73,6 +93,16 @@
     {
       "command": "memory usage",
       "timestamp": "2025-10-27T19:59:45.391155"
+    }
+  ],
+  "search_preferences": [
+    {
+      "query": "search files project",
+      "timestamp": "2025-10-27T20:17:22.444207"
+    },
+    {
+      "query": "search files jarvis",
+      "timestamp": "2025-10-27T20:17:45.304763"
     }
   ]
 }

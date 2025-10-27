@@ -92,18 +92,54 @@ class JARVISAssistant:
         self.user_preferences = {}
         self.auto_learn = True
         self.current_emails = []  # Store current email list for replies
+        self.conversation_context = {
+            "last_directory": None,
+            "last_drive": None,
+            "recent_paths": [],
+            "current_working_directory": None
+        }
         
     def setup_ai(self):
-        """Initialize the AI model"""
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY not set in .env file")
+        """Initialize the AI model with support for both Groq and Gemini"""
+        # Check if Gemini is disabled or if we should use Groq by default
+        if os.getenv("DISABLE_GEMINI", "").lower() in ["true", "1", "yes"] or os.getenv("USE_GROQ_ONLY", "").lower() in ["true", "1", "yes"]:
+            print("[AI] Using Groq only (Gemini disabled)")
+        else:
+            # Try Gemini first (faster model) with quick fallback
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if gemini_key:
+                try:
+                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    
+                    # Create Gemini instance without testing first
+                    self.llm = ChatGoogleGenerativeAI(
+                        model="gemini-1.5-flash",
+                        google_api_key=gemini_key,
+                        temperature=0.7
+                    )
+                    print("[AI] Using Gemini 1.5 Flash (fastest model)")
+                    self._setup_system_prompt()
+                    return
+                    
+                except ImportError:
+                    print("[WARNING] langchain_google_genai not installed, falling back to Groq")
+                except Exception as e:
+                    print(f"[WARNING] Gemini setup failed: {e}, falling back to Groq")
+        
+        # Fallback to Groq
+        groq_key = os.getenv("GROQ_API_KEY")
+        if not groq_key:
+            raise RuntimeError("Neither GEMINI_API_KEY nor GROQ_API_KEY set in .env file")
         
         self.llm = ChatGroq(
-            api_key=api_key,
+            api_key=groq_key,
             model="llama-3.1-8b-instant"
         )
-        
+        print("[AI] Using Groq Llama 3.1 8B Instant")
+        self._setup_system_prompt()
+    
+    def _setup_system_prompt(self):
+        """Setup JARVIS system prompt"""
         # JARVIS personality and capabilities
         self.system_prompt = """
         You are JARVIS, an advanced AI assistant with full system access. You can help with:
@@ -354,6 +390,9 @@ class JARVISAssistant:
         """Process incoming commands with full system access and auto-learning"""
         self.command_history.append(command)
         
+        # Extract context from command
+        self._extract_context_from_command(command.content)
+        
         # Load learning data
         self.load_learning_data()
         
@@ -467,10 +506,19 @@ class JARVISAssistant:
            any(phrase in command_lower for phrase in ["my downloads", "my desktop", "my documents", "my pictures", "my music", "my videos"]):
             # Extract directory from command
             directory = self._extract_directory(command_lower)
-            if directory:
-                return f"list files in {directory}"
-            else:
-                return "list files"
+            
+            # If no directory specified, use context
+            if not directory:
+                if self.conversation_context["last_directory"] and self.conversation_context["last_drive"]:
+                    directory = f"{self.conversation_context['last_directory']} in {self.conversation_context['last_drive']}"
+                elif self.conversation_context["last_directory"]:
+                    directory = self.conversation_context["last_directory"]
+                else:
+                    return "list files"
+            
+            # Update context
+            self._update_context_from_directory(directory)
+            return f"list files in {directory}"
         
         # File reading patterns
         elif any(word in command_lower for word in ["read", "open", "view", "see content"]):
@@ -560,8 +608,7 @@ class JARVISAssistant:
         patterns = [
             r"in\s+(\w+)",
             r"from\s+(\w+)",
-            r"my\s+(\w+)",
-            r"the\s+(\w+)"
+            r"my\s+(\w+)"
         ]
         
         for pattern in patterns:
@@ -572,6 +619,11 @@ class JARVISAssistant:
                     return directory_mappings[dir_name]
                 else:
                     return dir_name
+        
+        # If no specific directory found, check if it's a generic "files" request
+        # and use context if available
+        if command_lower in ["list files", "show files", "list the files", "show the files", "what files", "what's in"]:
+            return None  # This will trigger context usage in the calling method
         
         return None
     
@@ -641,6 +693,56 @@ class JARVISAssistant:
                 return match.group(1).strip()
         
         return None
+    
+    def _update_context_from_directory(self, directory: str):
+        """Update conversation context from directory information"""
+        directory_lower = directory.lower()
+        
+        # Extract drive information
+        if "d drive" in directory_lower or "d:" in directory_lower:
+            self.conversation_context["last_drive"] = "d drive"
+        elif "c drive" in directory_lower or "c:" in directory_lower:
+            self.conversation_context["last_drive"] = "c drive"
+        elif "e drive" in directory_lower or "e:" in directory_lower:
+            self.conversation_context["last_drive"] = "e drive"
+        
+        # Extract directory name
+        if "projects" in directory_lower:
+            self.conversation_context["last_directory"] = "projects"
+        elif "downloads" in directory_lower:
+            self.conversation_context["last_directory"] = "downloads"
+        elif "desktop" in directory_lower:
+            self.conversation_context["last_directory"] = "desktop"
+        elif "documents" in directory_lower:
+            self.conversation_context["last_directory"] = "documents"
+        
+        # Store recent paths
+        if directory not in self.conversation_context["recent_paths"]:
+            self.conversation_context["recent_paths"].insert(0, directory)
+            # Keep only last 5 paths
+            self.conversation_context["recent_paths"] = self.conversation_context["recent_paths"][:5]
+    
+    def _extract_context_from_command(self, command: str) -> None:
+        """Extract context information from user commands"""
+        command_lower = command.lower()
+        
+        # Look for drive mentions
+        if "d drive" in command_lower or "d:" in command_lower:
+            self.conversation_context["last_drive"] = "d drive"
+        elif "c drive" in command_lower or "c:" in command_lower:
+            self.conversation_context["last_drive"] = "c drive"
+        elif "e drive" in command_lower or "e:" in command_lower:
+            self.conversation_context["last_drive"] = "e drive"
+        
+        # Look for directory mentions
+        if "projects" in command_lower:
+            self.conversation_context["last_directory"] = "projects"
+        elif "downloads" in command_lower:
+            self.conversation_context["last_directory"] = "downloads"
+        elif "desktop" in command_lower:
+            self.conversation_context["last_directory"] = "desktop"
+        elif "documents" in command_lower:
+            self.conversation_context["last_directory"] = "documents"
     
     def learn_from_interaction(self, command: Command, response: str, user_feedback: str = None):
         """Learn from user interactions and improve responses"""
@@ -725,7 +827,7 @@ class JARVISAssistant:
         return preferences
     
     def generate_response(self, command: Command, memory_context: Dict, learned_prefs: Dict = None) -> str:
-        """Generate AI response with learned preferences"""
+        """Generate AI response with learned preferences and fallback"""
         learned_context = ""
         if learned_prefs:
             learned_context = f"\n\nLearned Preferences:\n{json.dumps(learned_prefs, indent=2)}"
@@ -742,8 +844,33 @@ class JARVISAssistant:
         Provide a helpful response and execute any requested actions.
         """
         
-        response = self.llm.invoke(prompt).content
-        return response
+        try:
+            response = self.llm.invoke(prompt).content
+            return response
+        except Exception as e:
+            # If Gemini fails, try to fallback to Groq (only once, no retries)
+            if "gemini" in str(type(self.llm)).lower():
+                print(f"[WARNING] Gemini failed: {str(e)[:100]}..., switching to Groq...")
+                try:
+                    from langchain_groq import ChatGroq
+                    groq_key = os.getenv("GROQ_API_KEY")
+                    if groq_key:
+                        fallback_llm = ChatGroq(
+                            api_key=groq_key,
+                            model="llama-3.1-8b-instant"
+                        )
+                        response = fallback_llm.invoke(prompt).content
+                        print("[AI] Switched to Groq fallback")
+                        # Update the main llm to use Groq for future calls
+                        self.llm = fallback_llm
+                        return response
+                    else:
+                        return f"I apologize, but I'm experiencing technical difficulties with both AI models. Please check your API keys."
+                except Exception as fallback_error:
+                    print(f"[ERROR] Both Gemini and Groq failed: {fallback_error}")
+                    return f"I apologize, but I'm experiencing technical difficulties. Error: {str(e)[:100]}..."
+            else:
+                return f"I apologize, but I'm experiencing technical difficulties. Error: {str(e)[:100]}..."
     
     def google_search(self, query: str) -> str:
         """Perform Google search"""

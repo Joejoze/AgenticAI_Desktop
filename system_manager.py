@@ -231,8 +231,34 @@ class FileManager:
             return {"error": str(e)}
     
     def search_files(self, pattern: str, directory: str = None, file_type: str = None) -> List[Dict[str, Any]]:
-        """Search for files matching pattern"""
+        """Search for files matching pattern with fuzzy matching"""
         search_dir = Path(directory) if directory else self.base_path
+        results = []
+        
+        try:
+            # First try exact matches
+            exact_matches = self._search_exact_matches(pattern, search_dir, file_type)
+            if exact_matches:
+                return exact_matches
+            
+            # If no exact matches, try fuzzy matching
+            fuzzy_matches = self._search_fuzzy_matches(pattern, search_dir, file_type)
+            if fuzzy_matches:
+                return fuzzy_matches
+            
+            # If still no matches, try directory search
+            dir_matches = self._search_directories(pattern, search_dir)
+            if dir_matches:
+                return dir_matches
+                
+        except Exception as e:
+            logger.error(f"Error searching files: {e}")
+            return [{"error": str(e)}]
+        
+        return [{"error": f"No files or directories found matching '{pattern}'"}]
+    
+    def _search_exact_matches(self, pattern: str, search_dir: Path, file_type: str = None) -> List[Dict[str, Any]]:
+        """Search for exact matches"""
         results = []
         
         try:
@@ -250,20 +276,123 @@ class FileManager:
                                 "path": str(file_path),
                                 "size": stat.st_size,
                                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                                "is_file": True
+                                "is_file": True,
+                                "match_type": "exact"
                             })
                         except (OSError, PermissionError):
                             continue
                 
                 # Limit results to prevent overwhelming output
-                if len(results) >= 100:
+                if len(results) >= 50:
                     break
                     
         except Exception as e:
-            logger.error(f"Error searching files: {e}")
-            return [{"error": str(e)}]
+            logger.error(f"Error in exact search: {e}")
         
         return results
+    
+    def _search_fuzzy_matches(self, pattern: str, search_dir: Path, file_type: str = None) -> List[Dict[str, Any]]:
+        """Search for fuzzy matches using similarity scoring"""
+        results = []
+        pattern_lower = pattern.lower()
+        
+        try:
+            for root, dirs, files in os.walk(search_dir):
+                for file in files:
+                    file_lower = file.lower()
+                    
+                    # Calculate similarity score
+                    similarity = self._calculate_similarity(pattern_lower, file_lower)
+                    
+                    # Only include files with reasonable similarity
+                    if similarity > 0.3:  # 30% similarity threshold
+                        file_path = Path(root) / file
+                        if file_type and not file.endswith(file_type):
+                            continue
+                        
+                        try:
+                            stat = file_path.stat()
+                            results.append({
+                                "name": file,
+                                "path": str(file_path),
+                                "size": stat.st_size,
+                                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                "is_file": True,
+                                "match_type": "fuzzy",
+                                "similarity": round(similarity, 2)
+                            })
+                        except (OSError, PermissionError):
+                            continue
+                
+                # Limit results to prevent overwhelming output
+                if len(results) >= 30:
+                    break
+                    
+        except Exception as e:
+            logger.error(f"Error in fuzzy search: {e}")
+        
+        # Sort by similarity score (highest first)
+        results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        return results[:20]  # Return top 20 matches
+    
+    def _search_directories(self, pattern: str, search_dir: Path) -> List[Dict[str, Any]]:
+        """Search for directories matching pattern"""
+        results = []
+        pattern_lower = pattern.lower()
+        
+        try:
+            for root, dirs, files in os.walk(search_dir):
+                for dir_name in dirs:
+                    dir_lower = dir_name.lower()
+                    
+                    # Check if directory name contains pattern or is similar
+                    if pattern_lower in dir_lower or self._calculate_similarity(pattern_lower, dir_lower) > 0.4:
+                        dir_path = Path(root) / dir_name
+                        try:
+                            # Count files in directory
+                            file_count = sum(1 for _ in dir_path.iterdir() if _.is_file())
+                            dir_count = sum(1 for _ in dir_path.iterdir() if _.is_dir())
+                            
+                            results.append({
+                                "name": dir_name,
+                                "path": str(dir_path),
+                                "is_file": False,
+                                "is_directory": True,
+                                "file_count": file_count,
+                                "dir_count": dir_count,
+                                "match_type": "directory"
+                            })
+                        except (OSError, PermissionError):
+                            continue
+                
+                # Limit results
+                if len(results) >= 20:
+                    break
+                    
+        except Exception as e:
+            logger.error(f"Error in directory search: {e}")
+        
+        return results
+    
+    def _calculate_similarity(self, str1: str, str2: str) -> float:
+        """Calculate similarity between two strings using Levenshtein distance"""
+        if not str1 or not str2:
+            return 0.0
+        
+        # Simple similarity calculation
+        if str1 in str2 or str2 in str1:
+            return 0.8
+        
+        # Calculate character overlap
+        set1 = set(str1)
+        set2 = set(str2)
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        
+        if union == 0:
+            return 0.0
+        
+        return intersection / union
     
     def read_file(self, file_path: str, max_size: int = 1024*1024) -> Dict[str, Any]:
         """Read file content with size limit"""
@@ -526,11 +655,44 @@ class JARVISSystemIntegration:
             pattern = command[13:].strip()
             results = self.file_manager.search_files(pattern)
             if results and "error" not in results[0]:
-                result = f"Found {len(results)} files matching '{pattern}':\n"
-                for file_info in results[:10]:  # Show first 10
-                    result += f"- {file_info['name']} ({file_info['path']})\n"
-                if len(results) > 10:
-                    result += f"... and {len(results) - 10} more files"
+                result = f"Found {len(results)} files matching '{pattern}':\n\n"
+                
+                # Group results by match type
+                exact_matches = [r for r in results if r.get('match_type') == 'exact']
+                fuzzy_matches = [r for r in results if r.get('match_type') == 'fuzzy']
+                dir_matches = [r for r in results if r.get('match_type') == 'directory']
+                
+                if exact_matches:
+                    result += "[EXACT MATCHES]:\n"
+                    for file_info in exact_matches[:5]:
+                        file_type = "[DIR]" if file_info.get('is_directory') else "[FILE]"
+                        size_str = f"({file_info['size']} bytes)" if file_info.get('is_file') else ""
+                        result += f"  {file_type} {file_info['name']} {size_str}\n"
+                        result += f"        Path: {file_info['path']}\n"
+                    result += "\n"
+                
+                if fuzzy_matches:
+                    result += "[SIMILAR MATCHES]:\n"
+                    for file_info in fuzzy_matches[:5]:
+                        similarity = file_info.get('similarity', 0)
+                        file_type = "[DIR]" if file_info.get('is_directory') else "[FILE]"
+                        size_str = f"({file_info['size']} bytes)" if file_info.get('is_file') else ""
+                        result += f"  {file_type} {file_info['name']} {size_str} (similarity: {similarity})\n"
+                        result += f"        Path: {file_info['path']}\n"
+                    result += "\n"
+                
+                if dir_matches:
+                    result += "[DIRECTORY MATCHES]:\n"
+                    for dir_info in dir_matches[:3]:
+                        file_count = dir_info.get('file_count', 0)
+                        dir_count = dir_info.get('dir_count', 0)
+                        result += f"  [DIR] {dir_info['name']} ({file_count} files, {dir_count} dirs)\n"
+                        result += f"        Path: {dir_info['path']}\n"
+                    result += "\n"
+                
+                if len(results) > 15:
+                    result += f"... and {len(results) - 15} more matches\n"
+                
                 return result
             else:
                 return f"No files found matching '{pattern}'"
@@ -583,8 +745,33 @@ class JARVISSystemIntegration:
             elif "what files in" in command_lower:
                 directory = command[command_lower.find("what files in") + 13:].strip()
             
+            # Handle context-aware directory resolution
+            if directory and " in " in directory.lower():
+                # Handle "projects in d drive" format
+                parts = directory.lower().split(" in ")
+                if len(parts) == 2:
+                    dir_name = parts[0].strip()
+                    drive_name = parts[1].strip()
+                    
+                    # Map drive names to actual paths
+                    if "d drive" in drive_name or "d:" in drive_name:
+                        if dir_name == "projects":
+                            directory = "D:/Projects"
+                        else:
+                            directory = f"D:/{dir_name.title()}"
+                    elif "c drive" in drive_name or "c:" in drive_name:
+                        if dir_name == "projects":
+                            directory = "C:/Projects"
+                        else:
+                            directory = f"C:/{dir_name.title()}"
+                    elif "e drive" in drive_name or "e:" in drive_name:
+                        if dir_name == "projects":
+                            directory = "E:/Projects"
+                        else:
+                            directory = f"E:/{dir_name.title()}"
+            
             # Handle special directories
-            if directory and directory.lower() in ["downloads", "download", "in downloads", "downloads folder"]:
+            elif directory and directory.lower() in ["downloads", "download", "in downloads", "downloads folder"]:
                 downloads_path = Path.home() / "Downloads"
                 directory = str(downloads_path)
             elif directory and directory.lower() in ["documents", "docs", "in documents", "documents folder"]:
@@ -603,6 +790,7 @@ class JARVISSystemIntegration:
                 videos_path = Path.home() / "Videos"
                 directory = str(videos_path)
             
+            # Try to list files in the specified directory
             results = self.file_manager.list_files(directory)
             if results and "error" not in results[0]:
                 result = f"Files in {directory or 'current directory'}:\n"
@@ -612,7 +800,12 @@ class JARVISSystemIntegration:
                     result += f"{file_type} {file_info['name']} {size_str}\n"
                 return result
             else:
-                return f"Error listing files: {results[0].get('error', 'Unknown error')}"
+                # If directory not found, try intelligent search
+                search_results = self._intelligent_directory_search(directory)
+                if search_results:
+                    return search_results
+                else:
+                    return f"Error listing files: {results[0].get('error', 'Unknown error')}"
         
         elif command_lower.startswith("read and make a list of all files from "):
             # Handle "read and make a list of all files from [directory]" commands
@@ -731,6 +924,68 @@ class JARVISSystemIntegration:
         
         else:
             return "Unknown system command. Available: system status, cpu usage, memory usage, running processes, search files, read file, write file, organize files, list files, ls, read folder, user profile, powershell [command], cmd [command]"
+    
+    def _intelligent_directory_search(self, directory_name: str) -> str:
+        """Intelligently search for directories when exact path not found"""
+        try:
+            # Search in common locations
+            search_locations = [
+                Path.home(),  # User home directory
+                Path("C:/"),  # C drive
+                Path("D:/"),  # D drive
+                Path("E:/"),  # E drive
+            ]
+            
+            found_directories = []
+            
+            for search_root in search_locations:
+                if not search_root.exists():
+                    continue
+                    
+                # Search for directories matching the pattern
+                search_results = self.file_manager._search_directories(directory_name.lower(), search_root)
+                found_directories.extend(search_results)
+            
+            if found_directories:
+                result = f"Directory '{directory_name}' not found, but found similar directories:\n\n"
+                
+                # Group by drive
+                by_drive = {}
+                for dir_info in found_directories[:10]:  # Limit to top 10
+                    drive = Path(dir_info['path']).drive
+                    if drive not in by_drive:
+                        by_drive[drive] = []
+                    by_drive[drive].append(dir_info)
+                
+                for drive, dirs in by_drive.items():
+                    result += f"[{drive}] Drive:\n"
+                    for dir_info in dirs:
+                        file_count = dir_info.get('file_count', 0)
+                        dir_count = dir_info.get('dir_count', 0)
+                        result += f"  [DIR] {dir_info['name']} ({file_count} files, {dir_count} dirs)\n"
+                        result += f"        Path: {dir_info['path']}\n"
+                    result += "\n"
+                
+                result += "Try using one of these paths, for example:\n"
+                result += f"  'list files in {found_directories[0]['path']}'\n"
+                
+                return result
+            else:
+                # Try file search as last resort
+                file_search_results = self.file_manager.search_files(directory_name)
+                if file_search_results and "error" not in file_search_results[0]:
+                    result = f"Directory '{directory_name}' not found, but found files with similar names:\n\n"
+                    for file_info in file_search_results[:10]:
+                        if file_info.get('is_file'):
+                            result += f"  [FILE] {file_info['name']}\n"
+                            result += f"        Path: {file_info['path']}\n"
+                    return result
+                
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error in intelligent directory search: {e}")
+            return None
     
     def handle_user_profile_command(self) -> str:
         """Handle user profile commands"""
