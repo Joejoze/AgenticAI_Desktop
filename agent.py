@@ -7,7 +7,7 @@
 import os, json
 from datetime import datetime
 from langchain_groq import ChatGroq
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 # =============================
 # LANGGRAPH MEMORY SYSTEM

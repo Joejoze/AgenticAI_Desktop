@@ -394,8 +394,14 @@ class FileManager:
         
         return intersection / union
     
-    def read_file(self, file_path: str, max_size: int = 1024*1024) -> Dict[str, Any]:
-        """Read file content with size limit"""
+    def read_file(self, file_path: str, max_size: int = 1024*1024, use_llm_summary: bool = False) -> Dict[str, Any]:
+        """Read file content with intelligent extraction for PDFs and images
+        
+        Args:
+            file_path: Path to the file
+            max_size: Maximum file size in bytes
+            use_llm_summary: If True, use LLM to summarize/understand PDF and image content
+        """
         try:
             path = Path(file_path)
             if not path.exists():
@@ -404,15 +410,27 @@ class FileManager:
             if path.stat().st_size > max_size:
                 return {"error": f"File too large (>{max_size} bytes). Use a smaller file or increase max_size."}
             
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            suffix = path.suffix.lower()
             
-            return {
-                "content": content,
-                "size": len(content),
-                "path": str(path),
-                "lines": len(content.splitlines())
-            }
+            # Handle PDFs with text extraction
+            if suffix == '.pdf':
+                return self._read_pdf(path, use_llm_summary)
+            
+            # Handle images with optional OCR
+            elif suffix in ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']:
+                return self._read_image(path, use_llm_summary)
+            
+            # Default: read as text file
+            else:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                return {
+                    "content": content,
+                    "size": len(content),
+                    "path": str(path),
+                    "lines": len(content.splitlines())
+                }
             
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {e}")
@@ -487,6 +505,256 @@ class FileManager:
         except Exception as e:
             logger.error(f"Error organizing files in {directory}: {e}")
             return {"error": str(e)}
+    
+    def _read_pdf(self, path: Path, use_llm_summary: bool = True) -> Dict[str, Any]:
+        """Extract text from PDF and optionally summarize with LLM"""
+        try:
+            logger.info(f"Reading PDF: {path.name}")
+            # Try pypdf first
+            try:
+                import pypdf
+                reader = pypdf.PdfReader(str(path))
+                text_parts = []
+                logger.info(f"Extracting text from {len(reader.pages)} pages...")
+                for page in reader.pages:
+                    text_parts.append(page.extract_text())
+                extracted_text = "\n".join(text_parts)
+                logger.info(f"Extracted {len(extracted_text)} characters from PDF")
+            except ImportError:
+                # Fallback: try PyPDF2
+                try:
+                    import PyPDF2
+                    with open(path, 'rb') as f:
+                        reader = PyPDF2.PdfReader(f)
+                        text_parts = []
+                        for page in reader.pages:
+                            text_parts.append(page.extract_text())
+                    extracted_text = "\n".join(text_parts)
+                except ImportError:
+                    return {
+                        "error": "PDF reading requires 'pypdf' or 'PyPDF2'. Install with: pip install pypdf",
+                        "path": str(path)
+                    }
+            
+            if not extracted_text.strip():
+                return {
+                    "content": "[PDF appears to be image-based or empty. No text could be extracted.]",
+                    "path": str(path),
+                    "size": 0,
+                    "lines": 0
+                }
+            
+            # If LLM summary requested, use it to understand the content
+            if use_llm_summary and len(extracted_text) > 500:
+                logger.info(f"Requesting LLM summary for {path.name}...")
+                summary = self._summarize_with_llm(extracted_text, str(path))
+                if summary:
+                    logger.info(f"LLM summary completed for {path.name}")
+                    return {
+                        "content": summary,
+                        "raw_text": extracted_text[:2000] + "..." if len(extracted_text) > 2000 else extracted_text,
+                        "path": str(path),
+                        "size": len(extracted_text),
+                        "lines": len(extracted_text.splitlines()),
+                        "summarized": True
+                    }
+                else:
+                    logger.warning(f"LLM summary failed for {path.name}, returning raw text")
+            
+            # Return extracted text (truncated if too long)
+            if len(extracted_text) > 3000:
+                content = extracted_text[:3000] + f"\n\n[... truncated, total {len(extracted_text)} characters]"
+            else:
+                content = extracted_text
+            
+            return {
+                "content": content,
+                "path": str(path),
+                "size": len(extracted_text),
+                "lines": len(extracted_text.splitlines())
+            }
+            
+        except Exception as e:
+            logger.error(f"Error reading PDF {path}: {e}")
+            return {"error": f"Failed to read PDF: {str(e)}"}
+    
+    def _read_image(self, path: Path, use_llm_summary: bool = True) -> Dict[str, Any]:
+        """Read image with optional OCR or vision LLM"""
+        try:
+            # Option 1: Use Gemini Vision if available (preferred for understanding)
+            if use_llm_summary:
+                vision_result = self._analyze_image_with_vision_llm(path)
+                if vision_result:
+                    return vision_result
+            
+            # Option 2: Fallback to OCR if pytesseract available
+            try:
+                import pytesseract
+                from PIL import Image
+                img = Image.open(path)
+                text = pytesseract.image_to_string(img)
+                
+                if text.strip():
+                    return {
+                        "content": f"[OCR extracted text from image]\n\n{text}",
+                        "path": str(path),
+                        "size": len(text),
+                        "lines": len(text.splitlines()),
+                        "method": "ocr"
+                    }
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"OCR failed for {path}: {e}")
+            
+            # Option 3: Just return image metadata
+            return {
+                "content": f"[Image file: {path.name}]\nTo read text from images, install pytesseract or configure Gemini Vision.",
+                "path": str(path),
+                "size": path.stat().st_size,
+                "lines": 0,
+                "method": "metadata_only"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error reading image {path}: {e}")
+            return {"error": f"Failed to read image: {str(e)}"}
+    
+    def _summarize_with_llm(self, text: str, file_path: str, timeout: int = 15) -> Optional[str]:
+        """Use LLM to summarize or understand document content
+        
+        Args:
+            text: Document text to summarize
+            file_path: Path to the document
+            timeout: Maximum seconds to wait for LLM response (default 15)
+        """
+        import concurrent.futures
+        
+        def _call_gemini():
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if not gemini_key:
+                return None
+            
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            
+            prompt = f"""You are analyzing a document. Provide a clear, structured summary.
+
+Document: {Path(file_path).name}
+
+Content:
+{text[:4000]}
+
+Provide:
+1. Brief overview (2-3 sentences)
+2. Key points or sections
+3. Main topics covered
+
+Be concise and informative."""
+            
+            logger.info("Calling Gemini API for summarization...")
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=prompt,
+            )
+            summary = getattr(resp, "text", None)
+            if summary:
+                return f"[AI Summary of {Path(file_path).name}]\n\n{summary}"
+            return None
+        
+        try:
+            # Try Gemini with timeout
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if gemini_key:
+                try:
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(_call_gemini)
+                        try:
+                            result = future.result(timeout=timeout)
+                            if result:
+                                return result
+                        except concurrent.futures.TimeoutError:
+                            logger.warning(f"Gemini summarization timed out after {timeout}s")
+                            return None
+                except Exception as e:
+                    logger.warning(f"Gemini summarization failed: {e}")
+            
+            # Fallback to Groq if available
+            groq_key = os.getenv("GROQ_API_KEY")
+            if groq_key:
+                try:
+                    from langchain_groq import ChatGroq
+                    llm = ChatGroq(api_key=groq_key, model="llama-3.1-8b-instant")
+                    
+                    prompt = f"Summarize this document in 3-5 key points:\n\n{text[:3000]}"
+                    summary = llm.invoke(prompt).content
+                    if summary:
+                        return f"[AI Summary of {Path(file_path).name}]\n\n{summary}"
+                except Exception as e:
+                    logger.warning(f"Groq summarization failed: {e}")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"LLM summarization error: {e}")
+            return None
+    
+    def _analyze_image_with_vision_llm(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Use Gemini Vision to understand image content"""
+        try:
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if not gemini_key:
+                return None
+            
+            from google import genai
+            from PIL import Image
+            import base64
+            import io
+            
+            client = genai.Client(api_key=gemini_key)
+            
+            # Load and encode image
+            img = Image.open(path)
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Resize if too large
+            max_size = 1024
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = tuple(int(dim * ratio) for dim in img.size)
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            
+            # Convert to bytes
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            img_bytes = buf.getvalue()
+            
+            # Call Gemini Vision
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=[
+                    "Describe this image in detail. If there is text, extract it. Explain what you see.",
+                    {"mime_type": "image/jpeg", "data": base64.b64encode(img_bytes).decode()}
+                ],
+            )
+            
+            description = getattr(resp, "text", None)
+            if description:
+                return {
+                    "content": f"[AI Vision Analysis of {path.name}]\n\n{description}",
+                    "path": str(path),
+                    "size": len(description),
+                    "lines": len(description.splitlines()),
+                    "method": "gemini_vision"
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Gemini Vision analysis failed for {path}: {e}")
+            return None
     
     def get_directory_info(self, directory: str) -> Dict[str, Any]:
         """Get comprehensive directory information"""
@@ -632,6 +900,69 @@ class JARVISSystemIntegration:
         """Handle system-related commands"""
         command_lower = command.lower()
         
+        # Check for NLP-extracted path in command
+        nlp_path = None
+        if "[NLP_PATH:" in command:
+            import re
+            match = re.search(r'\[NLP_PATH:([^\]]+)\]', command)
+            if match:
+                nlp_path = match.group(1)
+                # Remove the NLP tag from command for further processing
+                command = re.sub(r'\s*\[NLP_PATH:[^\]]+\]', '', command)
+                command_lower = command.lower()
+        
+        # If NLP extracted a path, use it directly for file operations
+        if nlp_path:
+            # Check if it's a file FIRST (priority for read operations)
+            if os.path.isfile(nlp_path):
+                logger.info(f"Reading file from NLP path: {nlp_path}")
+                print(f"[DEBUG] About to read file: {nlp_path}")
+                result = self.file_manager.read_file(nlp_path)
+                print(f"[DEBUG] File read completed, got result with keys: {result.keys()}")
+                if "error" in result:
+                    return f"Error reading file: {result['error']}"
+                # Show summary info with content
+                summary_note = " [AI Summarized]" if result.get('summarized') else ""
+                method_note = f" [{result['method']}]" if 'method' in result else ""
+                print(f"[DEBUG] Returning result to user")
+                return f"File: {os.path.basename(nlp_path)} ({result.get('lines', 0)} lines){summary_note}{method_note}\n\n{result['content']}"
+            
+            # If not a file, check if it's a directory
+            elif os.path.isdir(nlp_path):
+                logger.info(f"Listing directory from NLP path: {nlp_path}")
+                results = self.file_manager.list_files(nlp_path)
+                if results and "error" not in results[0]:
+                    result = f"Files in {nlp_path}:\n"
+                    for file_info in results:
+                        file_type = "[DIR]" if file_info['is_directory'] else "[FILE]"
+                        size_str = f"({file_info['size']} bytes)" if file_info['is_file'] else ""
+                        result += f"{file_type} {file_info['name']} {size_str}\n"
+                    return result
+                else:
+                    return f"Error listing files in {nlp_path}: {results[0].get('error', 'Unknown error') if results else 'No results'}"
+            
+            # Path doesn't exist - try case-insensitive search
+            else:
+                logger.warning(f"Path not found: {nlp_path}, attempting case-insensitive search...")
+                # Try to find the file with case-insensitive matching
+                parent_dir = os.path.dirname(nlp_path)
+                filename = os.path.basename(nlp_path)
+                
+                if os.path.isdir(parent_dir):
+                    try:
+                        for item in os.listdir(parent_dir):
+                            if item.lower() == filename.lower():
+                                found_path = os.path.join(parent_dir, item)
+                                logger.info(f"Found file with different case: {found_path}")
+                                result = self.file_manager.read_file(found_path)
+                                if "error" not in result:
+                                    summary_note = " [AI Summarized]" if result.get('summarized') else ""
+                                    return f"File: {item} ({result.get('lines', 0)} lines){summary_note}\n\n{result['content']}"
+                    except PermissionError:
+                        pass
+                
+                return f"Path not found: {nlp_path}. Please check if the file/folder exists."
+        
         if "system status" in command_lower or "system info" in command_lower:
             info = self.monitor.get_system_info()
             return f"System Status:\n{json.dumps(info, indent=2)}"
@@ -699,11 +1030,22 @@ class JARVISSystemIntegration:
         
         elif command_lower.startswith("read file "):
             file_path = command[9:].strip()
+            
+            # Check if it's a PDF or image to inform user about processing
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext == '.pdf':
+                logger.info(f"Processing PDF file: {file_path}")
+            elif file_ext in ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']:
+                logger.info(f"Processing image file: {file_path}")
+            
             result = self.file_manager.read_file(file_path)
             if "error" in result:
                 return f"Error: {result['error']}"
             else:
-                return f"File content ({result['lines']} lines):\n{result['content'][:500]}{'...' if len(result['content']) > 500 else ''}"
+                # Show if it was summarized
+                summary_note = " [AI Summarized]" if result.get('summarized') else ""
+                method_note = f" [{result['method']}]" if 'method' in result else ""
+                return f"File content ({result['lines']} lines){summary_note}{method_note}:\n{result['content'][:500]}{'...' if len(result['content']) > 500 else ''}"
         
         elif command_lower.startswith("write file "):
             parts = command[10:].strip().split(" ", 1)
@@ -923,7 +1265,8 @@ class JARVISSystemIntegration:
                 return f"[ERROR] Command Failed:\n{result.get('error', 'Unknown error')}\n{result.get('stderr', '')}"
         
         else:
-            return "Unknown system command. Available: system status, cpu usage, memory usage, running processes, search files, read file, write file, organize files, list files, ls, read folder, user profile, powershell [command], cmd [command]"
+            # Return None so the command gets passed to AI for understanding
+            return None
     
     def _intelligent_directory_search(self, directory_name: str) -> str:
         """Intelligently search for directories when exact path not found"""

@@ -79,6 +79,82 @@
     {
       "directory": "in downloads",
       "timestamp": "2025-10-27T20:48:52.821572"
+    },
+    {
+      "directory": "see my downloads folder",
+      "timestamp": "2025-11-30T20:09:38.438568"
+    },
+    {
+      "directory": "in download check documents folder",
+      "timestamp": "2025-11-30T20:10:30.253391"
+    },
+    {
+      "directory": "gets my documents folder in downloads",
+      "timestamp": "2025-11-30T20:13:11.714426"
+    },
+    {
+      "directory": "check my documents folder in downloads [nlp_path:c:\\users\\ben\\downloads\\documents]",
+      "timestamp": "2025-11-30T20:19:41.842481"
+    },
+    {
+      "directory": "get my documents folder in downloads [nlp_path:c:\\users\\ben\\downloads\\documents]",
+      "timestamp": "2025-11-30T20:22:06.832520"
+    },
+    {
+      "directory": "show files in documenets in downloads  [nlp_path:c:\\users\\ben\\downloads]",
+      "timestamp": "2025-11-30T20:28:02.210008"
+    },
+    {
+      "directory": "show files in documents folder whcih is in downloads [nlp_path:c:\\users\\ben\\documents\\files]",
+      "timestamp": "2025-11-30T20:28:26.403495"
+    },
+    {
+      "directory": "check the documents folder which is in downloads [nlp_path:c:\\users\\ben\\downloads\\documents]",
+      "timestamp": "2025-11-30T20:37:24.094281"
+    },
+    {
+      "directory": "check my files in documents folder in downloads [nlp_path:c:\\users\\ben\\downloads\\documents] [nlp_intent:list_files]",
+      "timestamp": "2025-11-30T20:41:25.963532"
+    },
+    {
+      "directory": "read this file in documents in downloads folder basic sorting questions (1).pdf [nlp_path:c:\\users\\ben\\downloads\\documents] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T20:49:33.825202"
+    },
+    {
+      "directory": "read file basic structure in documents folder in downloads [nlp_path:c:\\users\\ben\\downloads\\documents] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T22:05:44.566119"
+    },
+    {
+      "directory": "read resume_ben_furtado -xr.pdf in this  [nlp_path:c:\\users\\ben\\downloads\\documents\\resume_ben_furtado -xr.pdf] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T22:08:43.422719"
+    },
+    {
+      "directory": "read files in documents folder in download [nlp_path:c:\\users\\ben\\documents] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T22:47:43.402628"
+    },
+    {
+      "directory": "documents folder in downloads [nlp_path:c:\\users\\ben\\downloads\\documents] [nlp_intent:list_files]",
+      "timestamp": "2025-11-30T22:48:13.699617"
+    },
+    {
+      "directory": "resume_ben_furtado -xr.pdf read it in downloads/documents [nlp_path:c:\\users\\ben\\downloads] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T22:59:52.968164"
+    },
+    {
+      "directory": "resume_ben_furtado -xr.pdf read it in downloads/documents [nlp_path:c:\\users\\ben\\downloads] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T23:02:27.595352"
+    },
+    {
+      "directory": "resume_ben_furtado -xr.pdf read it from downloads/documents [nlp_path:c:\\users\\ben\\downloads] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T23:03:46.097872"
+    },
+    {
+      "directory": "resume_ben_furtado -xr.pdf read it from downloads/documents [nlp_path:c:\\users\\ben\\downloads] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T23:11:49.572214"
+    },
+    {
+      "directory": "resume_ben_furtado -xr.pdf read it from downloads/documents [nlp_path:c:\\users\\ben\\downloads\\documents\\resume_ben_furtado -xr.pdf] [nlp_intent:read_file]",
+      "timestamp": "2025-11-30T23:45:43.420904"
     }
   ],
   "system_preferences": [

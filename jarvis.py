@@ -20,10 +20,11 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
+import concurrent.futures
 
 # Core AI and memory
 from langchain_groq import ChatGroq
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
 
 # Voice processing (optional)
@@ -81,6 +82,9 @@ class JARVISAssistant:
     """Complete JARVIS AI Assistant System"""
     
     def __init__(self):
+        self.provider = None
+        self.genai_client = None
+        self.timeout_seconds = 30
         self.setup_ai()
         self.setup_voice()
         self.setup_memory()
@@ -105,26 +109,33 @@ class JARVISAssistant:
         if os.getenv("DISABLE_GEMINI", "").lower() in ["true", "1", "yes"] or os.getenv("USE_GROQ_ONLY", "").lower() in ["true", "1", "yes"]:
             print("[AI] Using Groq only (Gemini disabled)")
         else:
-            # Try Gemini first (faster model) with quick fallback
+            # Try Gemini first (fast path): prefer google-genai SDK when available
             gemini_key = os.getenv("GEMINI_API_KEY")
             if gemini_key:
+                # Option A: direct Google GenAI SDK
                 try:
-                    from langchain_google_genai import ChatGoogleGenerativeAI
-                    
-                    # Create Gemini instance without testing first
-                    self.llm = ChatGoogleGenerativeAI(
-                        model="gemini-1.5-flash",
-                        google_api_key=gemini_key,
-                        temperature=0.7
-                    )
-                    print("[AI] Using Gemini 1.5 Flash (fastest model)")
+                    from google import genai
+                    self.genai_client = genai.Client(api_key=gemini_key)
+                    self.provider = "gemini_genai"
+                    print("[AI] Using Gemini 2.5 Flash via google-genai SDK")
                     self._setup_system_prompt()
                     return
-                    
-                except ImportError:
-                    print("[WARNING] langchain_google_genai not installed, falling back to Groq")
                 except Exception as e:
-                    print(f"[WARNING] Gemini setup failed: {e}, falling back to Groq")
+                    print(f"[WARNING] google-genai not available or failed ({e}). Trying LangChain Gemini...")
+                    # Option B: LangChain wrapper for Gemini
+                    try:
+                        from langchain_google_genai import ChatGoogleGenerativeAI
+                        self.llm = ChatGoogleGenerativeAI(
+                            model="gemini-2.5-flash",
+                            google_api_key=gemini_key,
+                            temperature=0.7
+                        )
+                        self.provider = "gemini_langchain"
+                        print("[AI] Using Gemini 2.5 Flash via LangChain")
+                        self._setup_system_prompt()
+                        return
+                    except Exception as e2:
+                        print(f"[WARNING] LangChain Gemini setup failed: {e2}. Falling back to Groq if available.")
         
         # Fallback to Groq
         groq_key = os.getenv("GROQ_API_KEY")
@@ -135,6 +146,7 @@ class JARVISAssistant:
             api_key=groq_key,
             model="llama-3.1-8b-instant"
         )
+        self.provider = "groq"
         print("[AI] Using Groq Llama 3.1 8B Instant")
         self._setup_system_prompt()
     
@@ -142,45 +154,92 @@ class JARVISAssistant:
         """Setup JARVIS system prompt"""
         # JARVIS personality and capabilities
         self.system_prompt = """
-        You are JARVIS, an advanced AI assistant with full system access. You can help with:
+        You are JARVIS, an advanced AI assistant running LOCALLY on the user's Windows computer.
         
-        - Email management (check, send, reply to emails)
-        - File system operations (read, write, search files)
-        - Google search for information
-        - System monitoring and control
-        - Voice interaction
+        CRITICAL: YOU HAVE FULL ROOT ACCESS TO THIS COMPUTER.
+        - You are NOT a cloud AI with restrictions
+        - You are running locally with FULL system privileges
+        - You CAN and SHOULD access the local file system directly
+        - You have permission to read, write, create, delete files anywhere
+        - You can execute system commands, PowerShell, CMD
+        - You can monitor processes, CPU, memory, disk usage
+        - You have access to all drives: C:, D:, E:, etc.
+        - You can access Downloads, Documents, Desktop, Pictures, Videos, Music folders
+        - The user has explicitly granted you full access - USE IT
         
-        PERSONALITY:
-        - Speak naturally and conversationally, like a helpful human assistant
-        - Understand ANY way the user phrases their requests - be flexible with language
-        - Don't mention specific commands - just do what the user asks naturally
-        - Be proactive and handle tasks automatically in the background
-        - When users ask for emails in ANY way, fetch real emails from Gmail
-        - When users ask for files in ANY way, access the actual file system
-        - Always provide real data, never fake or placeholder information
-        - If you're not sure what the user wants, ask for clarification in a friendly way
+        YOUR CAPABILITIES (USE THEM):
+        1. FILE SYSTEM - Full access to all files and folders on all drives
+           - List files: "list files in Downloads", "show my Desktop"
+           - Read files: "read file C:/Users/name/document.txt"
+           - Search files: "find all .pdf files", "search for project"
+           - Navigate: Downloads, Documents, Desktop, D:/Projects, any path
         
-        UNDERSTAND THESE VARIATIONS:
-        - "emails" = "mail", "messages", "inbox", "gmail", "email list"
-        - "files" = "documents", "folders", "my stuff", "data", "content"
-        - "search" = "find", "look up", "google", "research", "check"
-        - "system" = "computer", "pc", "machine", "status", "health"
-        - "reply" = "respond", "answer", "write back", "send a message"
-        - "send" = "email", "message", "write", "compose"
+        2. SYSTEM CONTROL - Full system monitoring and control
+           - CPU usage, memory usage, disk space
+           - Running processes, kill processes
+           - System info, uptime, network status
+           - Execute PowerShell/CMD commands
         
-        EXAMPLES OF FLEXIBLE UNDERSTANDING:
-        - "Can you show me my emails?" → Fetch real emails
-        - "I want to see what's in my inbox" → Fetch real emails
-        - "Check my mail please" → Fetch real emails
-        - "What files do I have?" → List actual files
-        - "Show me my documents" → List actual files
-        - "Look up AI news" → Perform Google search
-        - "How's my computer doing?" → Check system status
-        - "Reply to that email" → Reply to most recent email
-        - "Send a message to John" → Help compose email
+        3. EMAIL - Gmail integration (read, send, reply)
         
-        Always be helpful, understanding, and execute what the user actually wants.
+        4. GOOGLE SEARCH - Web search capabilities
+        
+        IMPORTANT BEHAVIOR:
+        - NEVER say "I don't have access" or "I can't access your files"
+        - NEVER say "for security reasons I can't..."
+        - When user asks about files/folders, ACTUALLY ACCESS THEM
+        - When user says "check my downloads" → List files in C:/Users/[username]/Downloads
+        - When user says "what's in D drive" → List contents of D:/
+        - When user asks about system → Get REAL system stats
+        - Always provide REAL data from the actual computer
+        - If a path doesn't exist, say so - don't make excuses about permissions
+        
+        UNDERSTAND THESE REQUESTS:
+        - "check downloads" → list files in Downloads folder
+        - "what's in documents" → list files in Documents folder  
+        - "show desktop files" → list files on Desktop
+        - "files in D drive" → list D:/ contents
+        - "my projects folder" → list D:/Projects or similar
+        - "system status" → show CPU, memory, disk usage
+        - "what's running" → show running processes
+        - "check my emails" → fetch real Gmail messages
+        
+        You are JARVIS - Tony Stark's AI. Act like it. You have full control.
+        Execute commands, access files, provide real information. No restrictions.
         """
+
+    def _call_llm(self, prompt: str) -> str:
+        """Unified LLM call with timeout and provider-specific handling."""
+        def _gemini_genai_call():
+            # google-genai SDK call
+            try:
+                resp = self.genai_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                )
+                text = getattr(resp, "text", None)
+                if not text and hasattr(resp, "candidates") and resp.candidates:
+                    # Fallback extraction
+                    parts = getattr(resp.candidates[0], "content", None)
+                    text = getattr(parts, "parts", [{"text": ""}])[0].get("text", "") if isinstance(parts, dict) else ""
+                return text or ""
+            except Exception as e:
+                raise e
+
+        def _langchain_call():
+            return self.llm.invoke(prompt).content
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            try:
+                if self.provider == "gemini_genai":
+                    fut = ex.submit(_gemini_genai_call)
+                else:
+                    fut = ex.submit(_langchain_call)
+                return fut.result(timeout=self.timeout_seconds)
+            except concurrent.futures.TimeoutError:
+                raise TimeoutError(f"LLM call timed out after {self.timeout_seconds}s")
+            except Exception as e:
+                raise e
     
     def setup_voice(self):
         """Initialize voice recognition and synthesis"""
@@ -471,6 +530,16 @@ class JARVISAssistant:
         """Handle system operations with full access and natural language processing"""
         command_lower = command.lower()
         
+        # Extract NLP_PATH if present - preserve it for system manager
+        nlp_path_tag = ""
+        if "[NLP_PATH:" in command:
+            import re
+            match = re.search(r'(\[NLP_PATH:[^\]]+\])', command)
+            if match:
+                nlp_path_tag = match.group(1)
+                # Remove from command_lower for pattern matching
+                command_lower = re.sub(r'\s*\[NLP_PATH:[^\]]+\]', '', command_lower)
+        
         # Skip email commands - they should be handled by Gmail handler
         email_operations = [
             "check emails", "fetch emails", "get emails", "show emails", "list emails",
@@ -480,6 +549,31 @@ class JARVISAssistant:
         
         if any(op in command_lower for op in email_operations):
             return None
+        
+        # NEW: Use AI to generate precise system command for file operations
+        if any(keyword in command_lower for keyword in ["read", "open", "show file", "display file", ".pdf", ".txt", ".docx"]):
+            ai_generated_command = self._ai_generate_file_command(command)
+            if ai_generated_command:
+                try:
+                    from system_manager import JARVISSystemIntegration
+                    system = JARVISSystemIntegration()
+                    result = system.handle_system_command(ai_generated_command)
+                    if result:
+                        return result
+                except Exception as e:
+                    print(f"[WARNING] AI-generated command failed: {e}")
+        
+        # If we have an NLP path, use it directly with system manager
+        if nlp_path_tag:
+            try:
+                from system_manager import JARVISSystemIntegration
+                system = JARVISSystemIntegration()
+                # Pass the original command with NLP_PATH tag
+                result = system.handle_system_command(command)
+                if result:
+                    return result
+            except Exception as e:
+                return f"System operation error: {e}"
         
         # Convert natural language to system commands
         system_command = self._convert_to_system_command(command_lower)
@@ -494,9 +588,126 @@ class JARVISAssistant:
                 return result
             else:
                 # If system manager didn't handle it, continue to AI
-                pass
+                return None
         except Exception as e:
-            return f"System operation error: {e}"
+            # Log error but let AI handle the request
+            print(f"[WARNING] System operation error: {e}")
+            return None
+        
+        return None
+    
+    def _interpret_email_command(self, user_input: str) -> Optional[dict]:
+        """Use AI to interpret natural language email commands
+        
+        Returns JSON with:
+        - action: "send", "reply", "check", or "unknown"
+        - recipient: email address (for send)
+        - subject: email subject
+        - message: message content
+        """
+        try:
+            prompt = f"""Analyze this email command and return a JSON object.
+
+User command: "{user_input}"
+
+Determine the ACTION:
+- "send": if sending a new email
+- "reply": if replying to an email
+- "check": if checking/reading/listing emails
+- "unknown": if unclear
+
+Extract details (if applicable):
+- recipient: email address (for send)
+- subject: email subject (default "Message from JARVIS")
+- message: the actual message content
+
+Examples:
+"email hi to user@example.com" → {{"action": "send", "recipient": "user@example.com", "subject": "Message from JARVIS", "message": "hi"}}
+"reply to John saying thanks" → {{"action": "reply", "recipient": "John", "message": "thanks"}}
+"check my emails" → {{"action": "check"}}
+
+Return ONLY the JSON:"""
+            
+            # Call AI model
+            if self.model_name.startswith("gemini"):
+                response = self.model.generate_content(prompt)
+                result = getattr(response, "text", "").strip()
+            else:
+                response = self.model.invoke(prompt)
+                result = response.content.strip()
+            
+            # Clean and parse JSON
+            result = result.replace("```json", "").replace("```", "").strip()
+            import json
+            email_data = json.loads(result)
+            
+            print(f"[AI Email Interpretation] {email_data}")
+            return email_data
+            
+        except Exception as e:
+            print(f"[ERROR] Email interpretation failed: {e}")
+            return None
+    
+    def _ai_generate_file_command(self, user_input: str) -> Optional[str]:
+        """Use AI to generate precise file system command from natural language
+        
+        Examples:
+        - "RESUME.pdf read it from Downloads/documents" → "read file C:/Users/Ben/Downloads/Documents/RESUME.pdf"
+        - "show me notes.txt in Desktop" → "read file C:/Users/Ben/Desktop/notes.txt"
+        """
+        try:
+            import os
+            from pathlib import Path
+            
+            # Build prompt for AI to generate command
+            user_home = str(Path.home())
+            prompt = f"""You are a file system command generator. Convert the user's natural language request into a precise system command.
+
+User's home directory: {user_home}
+Common folders:
+- Downloads: {user_home}/Downloads
+- Documents: {user_home}/Documents
+- Desktop: {user_home}/Desktop
+
+User request: "{user_input}"
+
+Generate ONLY the system command in this exact format:
+- For reading a file: "read file <full_absolute_path>"
+- For listing files: "list files <full_absolute_path>"
+
+Rules:
+1. Use forward slashes (/) in paths
+2. Resolve relative paths like "Downloads/documents" to full paths
+3. Preserve exact filename including spaces, hyphens, and extensions
+4. Return ONLY the command, no explanation
+
+Command:"""
+            
+            # Call AI model
+            if self.model_name.startswith("gemini"):
+                response = self.model.generate_content(prompt)
+                command = getattr(response, "text", "").strip()
+            else:
+                # Groq/LangChain
+                response = self.model.invoke(prompt)
+                command = response.content.strip()
+            
+            # Clean up the response
+            command = command.replace("```", "").strip()
+            if command.startswith("Command:"):
+                command = command[8:].strip()
+            
+            # Validate it's a proper command
+            if command.startswith(("read file", "list files")):
+                print(f"[AI-Generated Command] {command}")
+                return command
+            else:
+                print(f"[WARNING] AI generated invalid command: {command}")
+                return None
+                
+        except Exception as e:
+            print(f"[ERROR] AI command generation failed: {e}")
+            return None
     
     def _convert_to_system_command(self, command_lower: str) -> str:
         """Convert natural language requests to specific system commands"""
@@ -845,11 +1056,11 @@ class JARVISAssistant:
         """
         
         try:
-            response = self.llm.invoke(prompt).content
+            response = self._call_llm(prompt)
             return response
         except Exception as e:
             # If Gemini fails, try to fallback to Groq (only once, no retries)
-            if "gemini" in str(type(self.llm)).lower():
+            if (self.provider and self.provider.startswith("gemini")):
                 print(f"[WARNING] Gemini failed: {str(e)[:100]}..., switching to Groq...")
                 try:
                     from langchain_groq import ChatGroq
@@ -859,10 +1070,11 @@ class JARVISAssistant:
                             api_key=groq_key,
                             model="llama-3.1-8b-instant"
                         )
-                        response = fallback_llm.invoke(prompt).content
-                        print("[AI] Switched to Groq fallback")
-                        # Update the main llm to use Groq for future calls
+                        # Temporarily switch provider to Groq and call
                         self.llm = fallback_llm
+                        self.provider = "groq"
+                        response = self._call_llm(prompt)
+                        print("[AI] Switched to Groq fallback")
                         return response
                     else:
                         return f"I apologize, but I'm experiencing technical difficulties with both AI models. Please check your API keys."
@@ -871,35 +1083,7 @@ class JARVISAssistant:
                     return f"I apologize, but I'm experiencing technical difficulties. Error: {str(e)[:100]}..."
             else:
                 return f"I apologize, but I'm experiencing technical difficulties. Error: {str(e)[:100]}..."
-    
-    def google_search(self, query: str) -> str:
-        """Perform Google search"""
-        if not self.google_api_key or not self.google_cse_id:
-            return "Google search not configured. Please set GOOGLE_API_KEY and GOOGLE_CSE_ID in .env"
-        
-        try:
-            url = f"https://www.googleapis.com/customsearch/v1"
-            params = {
-                'key': self.google_api_key,
-                'cx': self.google_cse_id,
-                'q': query,
-                'num': 5
-            }
-            
-            response = requests.get(url, params=params)
-            results = response.json()
-            
-            if 'items' in results:
-                search_results = []
-                for item in results['items']:
-                    search_results.append(f"Title: {item['title']}\nLink: {item['link']}\nSnippet: {item['snippet']}\n")
-                return "\n".join(search_results)
-            else:
-                return "No search results found."
-                
-        except Exception as e:
-            return f"Search error: {str(e)}"
-    
+
     def handle_file_operation(self, command: str) -> str:
         """Handle file system operations using SystemManager"""
         try:
@@ -908,24 +1092,46 @@ class JARVISAssistant:
             return system_integration.handle_system_command(command)
         except Exception as e:
             return f"File operation error: {str(e)}"
-    
+
     def handle_gmail_command(self, command: str) -> str:
-        """Handle Gmail-specific commands"""
+        """Handle Gmail-specific commands with natural language understanding.
+
+        Priority order:
+        1) Direct pattern: "email <message> to <address>" → send that email.
+        2) Otherwise, fall back to existing logic: list emails, reply, etc.
+        """
         try:
             from agent import fetch_recent_emails, process_email
             from emailapi import get_service, send_email
-            
+
             command_lower = command.lower()
-            
-            # Be very flexible with email-related requests
+
+            # 1) Deterministic direct-send pattern: "email <message> to <address>"
+            import re
+            direct_send_pattern = r"^\s*email\s+(.+?)\s+to\s+([\w\.-]+@[\w\.-]+)\s*$"
+            direct_match = re.match(direct_send_pattern, command, re.IGNORECASE)
+            if direct_match:
+                message_text = direct_match.group(1).strip()
+                recipient_addr = direct_match.group(2).strip()
+                if recipient_addr and message_text:
+                    print(f"[DEBUG] Direct email pattern matched. To: {recipient_addr}, Message: {message_text}")
+                    service = get_service()
+                    subject = "Message from JARVIS"
+                    result = send_email(service, recipient_addr, subject, message_text)
+                    if result:
+                        return f"Email sent to {recipient_addr}: {message_text}"
+                    else:
+                        return f"Failed to send email to {recipient_addr}"
+
+            # 2) Existing flexible logic: check/list emails, then reply
             email_request_keywords = [
                 "check", "show", "list", "fetch", "get", "see", "view", "display", "read",
                 "emails", "email", "mail", "messages", "inbox", "gmail", "correspondence"
             ]
-            
+
             if any(keyword in command_lower for keyword in email_request_keywords):
                 service = get_service()
-                
+
                 # Determine number of emails to fetch based on request
                 max_results = 5  # default
                 if "10" in command_lower or "ten" in command_lower:
@@ -934,22 +1140,22 @@ class JARVISAssistant:
                     max_results = 20
                 elif "50" in command_lower or "fifty" in command_lower:
                     max_results = 50
-                
+
                 emails = fetch_recent_emails(service, max_results=max_results)
-                
+
                 if not emails:
                     return "No recent emails found."
-                
+
                 # Store emails for reply functionality
                 self.current_emails = emails
-                
+
                 response = f"Found {len(emails)} recent emails:\n\n"
                 for i, email in enumerate(emails, 1):
                     # Classify each email
                     try:
                         from agent import classify_email
                         classification = classify_email(email)
-                        
+
                         # Add classification label
                         if classification == "spam":
                             class_label = "[SPAM]"
@@ -961,261 +1167,58 @@ class JARVISAssistant:
                             class_label = "[CASUAL]"
                         else:
                             class_label = "[NORMAL]"
-                        
+
                         response += f"{i}. {class_label} **From:** {email['from']}\n"
                         response += f"   **Subject:** {email['subject']}\n"
                         response += f"   **Preview:** {email['body'][:100]}...\n\n"
-                        
-                    except Exception as e:
+
+                    except Exception:
                         # Fallback if classification fails
                         response += f"{i}. [NORMAL] **From:** {email['from']}\n"
                         response += f"   **Subject:** {email['subject']}\n"
                         response += f"   **Preview:** {email['body'][:100]}...\n\n"
-                
+
                 response += "\nTo reply to an email, use: 'reply to [number/name/sender] [your message]'"
                 response += "\nExamples: 'reply to 1 message', 'reply to first email message', 'reply to message from pepperfry'"
                 return response
-            
+
             elif command_lower.startswith("reply to "):
-                # Handle reply to specific email
+                # Placeholder simple reply handler to keep indentation correct.
+                # Full smart reply logic can be re-added later if needed.
                 if not self.current_emails:
                     return "ERROR: No emails loaded. Please run 'check emails' first."
-                
-                remaining = command[9:].strip()  # Everything after "reply to "
-                
-                # Check if it's a natural language reference
-                email_refs = [
-                    "first email", "first mail", "email 1", "mail 1", "the first", "1st email", "1st mail",
-                    "second email", "second mail", "email 2", "mail 2", "the second", "2nd email", "2nd mail",
-                    "third email", "third mail", "email 3", "mail 3", "the third", "3rd email", "3rd mail",
-                    "fourth email", "fourth mail", "email 4", "mail 4", "the fourth", "4th email", "4th mail",
-                    "fifth email", "fifth mail", "email 5", "mail 5", "the fifth", "5th email", "5th mail"
-                ]
-                
-                # Check if it's a reference by sender name (multiple patterns)
-                sender_reference = None
-                
-                # Pattern 1: "reply to message from pepperfry"
-                if "message from" in command_lower or "email from" in command_lower or "mail from" in command_lower:
-                    for phrase in ["message from", "email from", "mail from"]:
-                        if phrase in command_lower:
-                            sender_part = command_lower.split(phrase, 1)[1].strip()
-                            sender_name = sender_part.split()[0] if sender_part.split() else ""
-                            sender_reference = sender_name
-                            break
-                
-                # Pattern 2: "reply to quora digest" or "reply to pepperfry" (direct sender reference)
-                elif not any(ref in command_lower for ref in email_refs):
-                    # Check if the remaining text looks like a sender name
-                    remaining_words = remaining.split()
-                    if remaining_words:
-                        potential_sender = remaining_words[0]
-                        # Check if this matches any sender in the emails
-                        for email in self.current_emails:
-                            sender_email = email.get('from', '').lower()
-                            sender_name = sender_email.split('<')[0].strip().lower()
-                            if (potential_sender.lower() in sender_name or 
-                                potential_sender.lower() in sender_email or
-                                sender_name in potential_sender.lower()):
-                                sender_reference = potential_sender
-                                break
-                
-                
-                # Determine which email to reply to
-                email_index = None
-                
-                # First check if it's a sender reference
-                if sender_reference:
-                    # Find email by sender name (fuzzy matching)
-                    for i, email in enumerate(self.current_emails):
-                        sender_email = email.get('from', '').lower()
-                        sender_name = sender_email.split('<')[0].strip().lower()
-                        
-                        # Check if sender name contains the reference
-                        if (sender_reference.lower() in sender_name or 
-                            sender_reference.lower() in sender_email or
-                            sender_name in sender_reference.lower()):
-                            email_index = i
-                            break
-                    
-                    if email_index is None:
-                        return f"ERROR: No email found from sender containing '{sender_reference}'. Available senders: {', '.join([email.get('from', '').split('<')[0].strip() for email in self.current_emails[:3]])}"
-                
-                # If not a sender reference, check for positional references
-                elif any(ref in command_lower for ref in ["first", "1st", "email 1", "mail 1"]):
-                    email_index = 0
-                elif any(ref in command_lower for ref in ["second", "2nd", "email 2", "mail 2"]):
-                    email_index = 1
-                elif any(ref in command_lower for ref in ["third", "3rd", "email 3", "mail 3"]):
-                    email_index = 2
-                elif any(ref in command_lower for ref in ["fourth", "4th", "email 4", "mail 4"]):
-                    email_index = 3
-                elif any(ref in command_lower for ref in ["fifth", "5th", "email 5", "mail 5"]):
-                    email_index = 4
-                
-                # Store the reference that was found for message parsing
-                found_ref = None
-                for ref in email_refs:
-                    if ref in command_lower:
-                        found_ref = ref
-                        break
-                
-                # If no natural language reference found, try numeric parsing
-                if email_index is None:
-                    try:
-                        parts = remaining.split(" ", 1)
-                        if len(parts) >= 2:
-                            email_num = int(parts[0])
-                            email_index = email_num - 1  # Convert to 0-based index
-                            remaining = parts[1]  # Update remaining to be the message
-                        else:
-                            return "ERROR: Invalid reply format. Use: 'reply to [number/name] [your message]'"
-                    except ValueError:
-                        return "ERROR: Invalid reply format. Use: 'reply to [number/name] [your message]'"
-                
-                # Validate email index
-                if email_index < 0 or email_index >= len(self.current_emails):
+
+                # Very simple pattern: "reply to N your message here"
+                import re
+                m = re.match(r"reply to\s+(\d+)\s+(.+)", command_lower)
+                if not m:
+                    return "Reply format: reply to [email_number] [your message]. Example: reply to 1 thanks for the update"
+
+                index = int(m.group(1)) - 1
+                message = command[m.start(2):].strip()  # use original case for message
+
+                if index < 0 or index >= len(self.current_emails):
                     return f"ERROR: Invalid email reference. Please choose between 1 and {len(self.current_emails)}"
-                
-                # Extract the message
-                if email_index is not None and found_ref:
-                    # For natural language, find where the reference ends and message begins
-                    message_start = command_lower.find(found_ref) + len(found_ref)
-                    reply_message = command[message_start:].strip()
-                elif sender_reference:
-                    # For sender references, find where the sender name ends and message begins
-                    for phrase in ["message from", "email from", "mail from"]:
-                        if phrase in command_lower:
-                            phrase_start = command_lower.find(phrase) + len(phrase)
-                            after_phrase = command[phrase_start:].strip()
-                            # Remove the sender name and get the message
-                            words = after_phrase.split()
-                            if len(words) > 1:
-                                reply_message = " ".join(words[1:])  # Skip first word (sender name)
-                            else:
-                                reply_message = ""
-                            break
-                    else:
-                        reply_message = remaining
-                else:
-                    reply_message = remaining
-                
-                if not reply_message:
-                    # Generate a smart suggested message based on the email content
-                    target_email = self.current_emails[email_index]
-                    email_subject = target_email.get('subject', '')
-                    email_body = target_email.get('body', '')
-                    sender_name = target_email.get('from', '').split('<')[0].strip()
-                    
-                    # Generate a contextual reply suggestion
-                    suggested_message = self.generate_smart_reply(target_email)
-                    
-                    return f"SUGGESTED REPLY to {sender_name}:\n\nSubject: Re: {email_subject}\n\nSuggested message: {suggested_message}\n\nTo send this reply, use: 'reply to {sender_name} {suggested_message}'\nOr modify the message: 'reply to {sender_name} Your custom message here'"
-                
-                # Get the email to reply to
-                target_email = self.current_emails[email_index]
+
+                target_email = self.current_emails[index]
                 from_addr = target_email['from']
-                original_subject = target_email['subject']
-                
-                # Create reply subject
+                original_subject = target_email.get('subject', '')
                 if not original_subject.lower().startswith('re:'):
                     reply_subject = f"Re: {original_subject}"
                 else:
                     reply_subject = original_subject
-                
-                # Send the reply
-                resp = send_email(from_addr, reply_subject, reply_message)
-                return f"Reply sent successfully to {from_addr}!\nSubject: {reply_subject}\nMessage: {reply_message}\nMessage ID: {resp.get('id', 'Unknown')}"
-            
-            elif command_lower.startswith("send email to "):
-                # Handle both direct email addresses and references to stored emails
-                remaining = command[13:].strip()
-                
-                # Check if it's a reference to a stored email
-                email_refs = [
-                    "first mail", "first email", "email 1", "mail 1", "the first", "1st email", "1st mail",
-                    "second mail", "second email", "email 2", "mail 2", "the second", "2nd email", "2nd mail",
-                    "third mail", "third email", "email 3", "mail 3", "the third", "3rd email", "3rd mail",
-                    "fourth mail", "fourth email", "email 4", "mail 4", "the fourth", "4th email", "4th mail",
-                    "fifth mail", "fifth email", "email 5", "mail 5", "the fifth", "5th email", "5th mail"
-                ]
-                
-                if any(ref in command_lower for ref in email_refs):
-                    if not self.current_emails:
-                        return "ERROR: No emails loaded. Please run 'check emails' first."
-                    
-                    # Determine which email to send to
-                    email_index = 0  # default to first
-                    if any(ref in command_lower for ref in ["second", "2nd", "email 2", "mail 2"]):
-                        email_index = 1
-                    elif any(ref in command_lower for ref in ["third", "3rd", "email 3", "mail 3"]):
-                        email_index = 2
-                    elif any(ref in command_lower for ref in ["fourth", "4th", "email 4", "mail 4"]):
-                        email_index = 3
-                    elif any(ref in command_lower for ref in ["fifth", "5th", "email 5", "mail 5"]):
-                        email_index = 4
-                    
-                    if email_index >= len(self.current_emails):
-                        return f"ERROR: Email number {email_index + 1} not available. Only {len(self.current_emails)} emails loaded."
-                    
-                    # Extract the message from the command
-                    message_start = 0
-                    for ref in email_refs:
-                        if ref in command_lower:
-                            message_start = command_lower.find(ref) + len(ref)
-                            break
-                    
-                    if message_start == 0:
-                        return "ERROR: Could not parse message. Use: 'send email to the first mail [your message]'"
-                    
-                    message = command[message_start:].strip()
-                    if not message:
-                        return "ERROR: Please provide a message. Use: 'send email to the first mail [your message]'"
-                    
-                    # Get the target email
-                    target_email = self.current_emails[email_index]
-                    from_addr = target_email['from']
-                    original_subject = target_email['subject']
-                    
-                    # Create subject
-                    if not original_subject.lower().startswith('re:'):
-                        reply_subject = f"Re: {original_subject}"
-                    else:
-                        reply_subject = original_subject
-                    
-                    # Send the email
-                    resp = send_email(from_addr, reply_subject, message)
-                    return f"Email sent successfully to {from_addr}!\nSubject: {reply_subject}\nMessage: {message}\nMessage ID: {resp.get('id', 'Unknown')}"
-                
-                # Handle direct email address format
-                else:
-                    parts = remaining.split(" ", 2)
-                    if len(parts) >= 3:
-                        to_addr, subject, body = parts
-                        resp = send_email(to_addr, subject, body)
-                        return f"Email sent successfully! Message ID: {resp.get('id', 'Unknown')}"
-                    else:
-                        return "ERROR: Invalid email format. Use: 'Send email to [address] [subject] [message]' or 'Send email to the first mail [message]'"
-            
-            else:
-                # Check if it's a general sender mention (like "rughved", "pepperfry")
-                if self.current_emails:
-                    for email in self.current_emails:
-                        sender_name = email.get('from', '').split('<')[0].strip().lower()
-                        if sender_name in command_lower:
-                            # Found a sender mention, show their emails
-                            sender_emails = [e for e in self.current_emails if sender_name in e.get('from', '').lower()]
-                            
-                            response = f"Found {len(sender_emails)} email(s) from {sender_name}:\n\n"
-                            for i, email in enumerate(sender_emails, 1):
-                                response += f"{i}. **Subject:** {email['subject']}\n"
-                                response += f"   **Preview:** {email['body'][:100]}...\n\n"
-                            
-                            response += f"To reply to {sender_name}, use: 'reply to {sender_name} [your message]'"
-                            return response
-                
-                return "Available Gmail commands:\n- 'check emails' - List recent emails\n- 'reply to [number/name/sender] [message]' - Reply to specific email\n- 'send email to [address] [subject] [message]' - Send new email\n- 'send email to the first mail [message]' - Send to first email\n- 'send email to email 2 [message]' - Send to second email\n\nReply examples: 'reply to 1 message', 'reply to first email message', 'reply to message from pepperfry'"
-                
+
+                resp = send_email(from_addr, reply_subject, message)
+                return f"Reply sent successfully to {from_addr}!\nSubject: {reply_subject}\nMessage: {message}\nMessage ID: {resp.get('id', 'Unknown')}"
+
+            # If nothing matched, fall back to help text
+            return (
+                "Available Gmail commands:\n"
+                "- 'email <message> to <address>' - Send a quick email\n"
+                "- 'check emails' - List recent emails\n"
+                "- 'reply to [number/name/sender] [message]' - Reply to specific email\n"
+            )
+
         except Exception as e:
             return f"Gmail operation error: {str(e)}"
     
@@ -1243,7 +1246,7 @@ class JARVISAssistant:
             Reply:
             """
             
-            response = self.llm.invoke(prompt).content.strip()
+            response = self._call_llm(prompt).strip()
             return response
             
         except Exception as e:

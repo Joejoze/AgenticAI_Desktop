@@ -14,6 +14,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from dotenv import load_dotenv
 
 try:
     import webview
@@ -25,6 +26,17 @@ except ImportError:
 def check_requirements():
     """Check if all requirements are met"""
     print("Checking requirements...")
+    # Load environment variables from .env (script directory)
+    try:
+        dotenv_path = Path(__file__).resolve().parent / ".env"
+        if dotenv_path.exists():
+            load_dotenv(dotenv_path)
+            print(f"SUCCESS: Loaded .env from {dotenv_path}")
+        else:
+            load_dotenv()
+            print("INFO: Using default .env loading")
+    except Exception as e:
+        print(f"WARNING: Error loading .env: {e}")
     
     # Check if we're in the right directory
     if not Path("jarvis_streamlit.py").exists():
@@ -48,17 +60,22 @@ def check_requirements():
         print("Please run: pip install streamlit psutil")
         return False
     
-    # Check environment variables
-    required_env = ["GROQ_API_KEY"]
-    missing_env = []
-    
-    for env_var in required_env:
-        if not os.getenv(env_var):
-            missing_env.append(env_var)
-    
-    if missing_env:
-        print(f"WARNING: Missing environment variables: {', '.join(missing_env)}")
-        print("   Please set these in your .env file")
+    # Check environment variables (at least one of GROQ_API_KEY or GEMINI_API_KEY must be set)
+    groq = os.getenv("GROQ_API_KEY")
+    gemini = os.getenv("GEMINI_API_KEY")
+    if not groq and not gemini:
+        print("ERROR: Missing environment variables: GROQ_API_KEY or GEMINI_API_KEY")
+        print("   Please create a .env file with at least one of these keys set.")
+        return False
+    else:
+        missing = []
+        if not groq:
+            missing.append("GROQ_API_KEY")
+        if not gemini:
+            missing.append("GEMINI_API_KEY")
+        if missing:
+            print(f"WARNING: Missing environment variables: {', '.join(missing)}")
+            print("   The app will run using the available provider.")
     
     print("SUCCESS: Requirements check completed")
     return True
@@ -126,7 +143,8 @@ def create_desktop_window():
             minimized=False,
             on_top=False,
             shadow=True,
-            focus=True
+            focus=True,
+            text_select=True
         )
         
         print("SUCCESS: Desktop window created")
@@ -186,7 +204,8 @@ def main():
             minimized=False,
             on_top=False,
             shadow=True,
-            focus=True
+            focus=True,
+            text_select=True
         )
         
         # Start the webview

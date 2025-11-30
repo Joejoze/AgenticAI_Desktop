@@ -5,6 +5,7 @@
 import os
 import json
 from datetime import datetime
+import concurrent.futures
 from typing import Dict, List, Any, Optional, TypedDict
 from dataclasses import dataclass
 
@@ -41,17 +42,48 @@ class SimpleLangGraphMemorySystem:
     
     def __init__(self, persist_directory: str = "./simple_memory_db"):
         self.persist_directory = persist_directory
-        self.llm = ChatGroq(
-            api_key=os.getenv("GROQ_API_KEY"),
-            model="llama-3.1-8b-instant"
-        )
+        self.timeout_seconds = 25
         
         # In-memory storage for quick access
         self.memories: List[EmailMemory] = []
         self.memory_file = os.path.join(persist_directory, "memories.json")
         
+        # Setup LLM
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        groq_key = os.getenv("GROQ_API_KEY")
+
+        # Prefer Gemini if available; fallback to Groq; else raise clear error
+        if gemini_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self.llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=gemini_key,
+                    temperature=0.7,
+                )
+                print("[Memory LLM] Using Gemini 2.5 Flash via LangChain")
+            except Exception as e:
+                print(f"[Memory LLM WARNING] Gemini setup failed: {e}. Falling back to Groq if available.")
+                if not groq_key:
+                    raise RuntimeError("No valid LLM configured: set GEMINI_API_KEY or GROQ_API_KEY in .env")
+                self.llm = ChatGroq(api_key=groq_key, model="llama-3.1-8b-instant")
+                print("[Memory LLM] Using Groq Llama 3.1 8B Instant")
+        elif groq_key:
+            self.llm = ChatGroq(api_key=groq_key, model="llama-3.1-8b-instant")
+            print("[Memory LLM] Using Groq Llama 3.1 8B Instant")
+        else:
+            raise RuntimeError("No valid LLM configured for memory system. Please set GEMINI_API_KEY or GROQ_API_KEY in .env")
+        
         # Load existing memories
         self._load_memories()
+    
+    def _call_llm(self, prompt: str) -> str:
+        """Call the configured LLM with a timeout to avoid hangs."""
+        def _invoke():
+            return self.llm.invoke(prompt).content
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_invoke)
+            return fut.result(timeout=self.timeout_seconds)
     
     def _load_memories(self):
         """Load memories from disk"""
@@ -229,7 +261,15 @@ def create_simple_memory_workflow(memory_system: SimpleLangGraphMemorySystem):
             Answer with only one word.
             """
         
-        result = memory_system.llm.invoke(prompt).content.strip().lower()
+        try:
+            result = memory_system._call_llm(prompt).strip().lower()
+        except Exception:
+            # Safe fallback classification
+            text = email_data.get('body') if isinstance(email_data, dict) else email_data.get('content', '')
+            if text and any(k in text.lower() for k in ["urgent", "asap", "deadline", "meeting"]):
+                result = "important"
+            else:
+                result = "normal"
         
         return {
             **state,
@@ -274,7 +314,14 @@ def create_simple_memory_workflow(memory_system: SimpleLangGraphMemorySystem):
             Consider the context and previous interactions when crafting your response.
             """
         
-        response = memory_system.llm.invoke(prompt).content
+        try:
+            response = memory_system._call_llm(prompt)
+        except Exception:
+            # Fallback short response
+            if isinstance(email_data, dict) and 'from' in email_data:
+                response = "Thank you for your email. I'll get back to you shortly."
+            else:
+                response = "Got it. How else can I help?"
         
         return {
             **state,

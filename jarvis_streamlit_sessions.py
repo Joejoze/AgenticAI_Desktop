@@ -11,6 +11,7 @@ from agent import fetch_recent_emails, process_email, get_memory_insights
 from emailapi import get_service, send_email
 from system_manager import JARVISSystemIntegration
 from chat_database import chat_db
+from smart_nlp import SmartNLP
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,8 @@ if "auto_initialized" not in st.session_state:
     st.session_state.auto_initialized = False
 if "voice_mode" not in st.session_state:
     st.session_state.voice_mode = False
+if "nlp_processor" not in st.session_state:
+    st.session_state.nlp_processor = None
 
 def initialize_jarvis():
     """Initialize JARVIS system"""
@@ -44,6 +47,7 @@ def initialize_jarvis():
             with st.spinner("Initializing JARVIS..."):
                 st.session_state.jarvis = JARVISAssistant()
                 st.session_state.system_integration = JARVISSystemIntegration()
+                st.session_state.nlp_processor = SmartNLP()
             st.success("[SUCCESS] JARVIS initialized successfully!")
         return True
     except Exception as e:
@@ -180,14 +184,45 @@ def render_chat_interface():
         # Display user message
         with st.chat_message("user"):
             st.write(prompt)
+
+        # Process with SmartNLP pipeline
+        nlp_result = None
+        resolved_path = None
+        if st.session_state.nlp_processor:
+            nlp_result = st.session_state.nlp_processor.process(prompt)
+            resolved_path = nlp_result.path_intent
+            
+            # Show NLP insights in expander
+            with st.expander("NLP Insights", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Original:** {nlp_result.original_text}")
+                    st.write(f"**Normalized:** {nlp_result.normalized_text}")
+                    if resolved_path:
+                        st.write(f"**Detected Path:** `{resolved_path}`")
+                with col2:
+                    st.write(f"**Intent:** {nlp_result.intent} ({nlp_result.confidence:.0%})")
+                    st.write(f"**Action:** {nlp_result.action}")
+                    st.write(f"**Context:** {nlp_result.context_summary}")
+                
+                if nlp_result.entities:
+                    with st.expander("Entities", expanded=False):
+                        st.json({k: v for k, v in nlp_result.entities.items() if v})
         
         # Get JARVIS response
         if st.session_state.jarvis:
             try:
+                # Build enhanced prompt with NLP insights
+                enhanced_prompt = prompt
+                if resolved_path:
+                    enhanced_prompt = f"{prompt} [NLP_PATH:{resolved_path}]"
+                if nlp_result and nlp_result.intent != "general_query":
+                    enhanced_prompt = f"{enhanced_prompt} [NLP_INTENT:{nlp_result.intent}]"
+                
                 # Create command object
                 command = Command(
                     type=CommandType.TEXT,
-                    content=prompt,
+                    content=enhanced_prompt,
                     source="streamlit",
                     timestamp=datetime.now()
                 )
@@ -195,6 +230,10 @@ def render_chat_interface():
                 # Get response
                 with st.spinner("JARVIS is thinking..."):
                     response = st.session_state.jarvis.process_command(command)
+                
+                # Update NLP context
+                if st.session_state.nlp_processor and nlp_result:
+                    st.session_state.nlp_processor.update_context(prompt, nlp_result, response)
                 
                 # Display assistant response
                 with st.chat_message("assistant"):
