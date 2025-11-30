@@ -1117,11 +1117,75 @@ Command:"""
                     print(f"[DEBUG] Direct email pattern matched. To: {recipient_addr}, Message: {message_text}")
                     service = get_service()
                     subject = "Message from JARVIS"
-                    result = send_email(service, recipient_addr, subject, message_text)
+                    result = send_email(recipient_addr, subject, message_text, service_override=service)
                     if result:
                         return f"Email sent to {recipient_addr}: {message_text}"
                     else:
                         return f"Failed to send email to {recipient_addr}"
+
+            # 1.5) Pattern: "send email to [first/second/third/N] email" or "send email to email [N]"
+            send_to_email_pattern = r"send\s+(?:email|emil|mail)\s+to\s+(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|\d+)(?:\s+email)?"
+            send_to_email_match = re.search(send_to_email_pattern, command_lower)
+            if send_to_email_match:
+                # Map ordinal words to numbers
+                ordinal_map = {
+                    "first": 1, "1st": 1, "1": 1,
+                    "second": 2, "2nd": 2, "2": 2,
+                    "third": 3, "3rd": 3, "3": 3,
+                    "fourth": 4, "4th": 4, "4": 4,
+                    "fifth": 5, "5th": 5, "5": 5
+                }
+                
+                # Extract the ordinal/number
+                ordinal_text = re.search(r"(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|\d+)", command_lower)
+                if ordinal_text:
+                    ordinal_str = ordinal_text.group(0).lower()
+                    email_index = ordinal_map.get(ordinal_str, int(ordinal_str) if ordinal_str.isdigit() else 1) - 1
+                    
+                    # Fetch emails if not already loaded
+                    if not hasattr(self, 'current_emails') or not self.current_emails:
+                        service = get_service()
+                        emails = fetch_recent_emails(service, max_results=10)
+                        if not emails:
+                            return "No recent emails found. Cannot send email."
+                        self.current_emails = emails
+                    
+                    # Check if index is valid
+                    if email_index < 0 or email_index >= len(self.current_emails):
+                        return f"ERROR: Invalid email reference. Please choose between 1 and {len(self.current_emails)}"
+                    
+                    # Get the target email
+                    target_email = self.current_emails[email_index]
+                    from_field = target_email.get('from', '')
+                    
+                    # Extract email address
+                    email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", from_field)
+                    recipient_addr = email_match.group(1) if email_match else from_field
+                    
+                    # Extract message if provided, otherwise use default
+                    message_match = re.search(r"send\s+(?:email|emil|mail)\s+to\s+(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|\d+)(?:\s+email)?\s+(.+)", command_lower)
+                    if message_match:
+                        message_text = command[message_match.start(1):].strip()
+                    else:
+                        # Default message
+                        message_text = "Hello, I'm reaching out regarding your recent email."
+                    
+                    # Send the email
+                    service = get_service()
+                    original_subject = target_email.get('subject', 'Message from JARVIS')
+                    if not original_subject.lower().startswith('re:'):
+                        subject = f"Re: {original_subject}"
+                    else:
+                        subject = original_subject
+                    
+                    try:
+                        result = send_email(recipient_addr, subject, message_text, service_override=service)
+                        if result:
+                            return f"✅ Email sent successfully to {recipient_addr}!\nSubject: {subject}\nMessage: {message_text}\nMessage ID: {result.get('id', 'Unknown')}"
+                        else:
+                            return f"❌ Failed to send email to {recipient_addr}"
+                    except Exception as e:
+                        return f"❌ Error sending email: {str(e)}"
 
             # 2) Existing flexible logic: check/list emails, then reply
             email_request_keywords = [
@@ -1201,7 +1265,12 @@ Command:"""
                     return f"ERROR: Invalid email reference. Please choose between 1 and {len(self.current_emails)}"
 
                 target_email = self.current_emails[index]
-                from_addr = target_email['from']
+                from_field = target_email['from']
+                # Extract email address from "Name <email@example.com>" or just "email@example.com"
+                import re
+                email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", from_field)
+                from_addr = email_match.group(1) if email_match else from_field
+                
                 original_subject = target_email.get('subject', '')
                 if not original_subject.lower().startswith('re:'):
                     reply_subject = f"Re: {original_subject}"

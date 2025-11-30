@@ -89,3 +89,13 @@ def send_email(to_address: str, subject: str, body_text: str, *, service_overrid
     svc = service_override or get_service()
     return svc.users().messages().send(userId="me", body=send_body).execute()
 
+
+def get_user_email():
+    """Get the authenticated user's email address from Gmail API."""
+    try:
+        svc = get_service()
+        profile = svc.users().getProfile(userId="me").execute()
+        return profile.get("emailAddress", "")
+    except Exception as e:
+        print(f"[ERROR] Failed to get user email: {e}")
+        return None

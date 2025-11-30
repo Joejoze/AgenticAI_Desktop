@@ -196,12 +196,13 @@ def fetch_recent_emails(service, max_results=10):
     if not messages:
         return fetched
     for m in messages:
-        msg = service.users().messages().get(userId="me", id=m["id"]).execute()
+        msg_id = m["id"]
+        msg = service.users().messages().get(userId="me", id=msg_id).execute()
         headers = msg["payload"].get("headers", [])
         subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(No Subject)")
         sender = next((h["value"] for h in headers if h["name"] == "From"), "(Unknown Sender)")
         snippet = msg.get("snippet", "")
-        fetched.append({"from": sender, "subject": subject, "body": snippet})
+        fetched.append({"id": msg_id, "from": sender, "subject": subject, "body": snippet})
     return fetched
 
 if __name__ == "__main__":

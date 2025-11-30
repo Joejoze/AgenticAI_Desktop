@@ -70,6 +70,36 @@ def save_message(session_id: str, role: str, content: str, metadata: Dict = None
     """Save a message to the database"""
     return chat_db.add_message(session_id, role, content, metadata)
 
+def process_chat_message(message: str) -> str:
+    """Process chat message through JARVIS (exact copy from jarvis_streamlit.py)"""
+    try:
+        if st.session_state.jarvis is None:
+            return "❌ JARVIS not initialized. Please initialize first."
+        
+        # Validate message
+        if not message or not message.strip():
+            return "❌ Please enter a valid message."
+        
+        # Create command object
+        command = Command(
+            type=CommandType.TEXT,
+            content=message.strip(),
+            source="streamlit_chat",
+            timestamp=datetime.now()
+        )
+        
+        # Process through JARVIS with auto-learning
+        response = st.session_state.jarvis.process_command(command)
+        
+        # Learn from this interaction
+        st.session_state.jarvis.learn_from_interaction(command, response)
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error processing chat message: {e}")
+        return f"❌ Error processing message: {e}"
+
 def render_sidebar():
     """Render the sidebar with chat sessions"""
     with st.sidebar:
@@ -212,24 +242,12 @@ def render_chat_interface():
         # Get JARVIS response
         if st.session_state.jarvis:
             try:
-                # Build enhanced prompt with NLP insights
-                enhanced_prompt = prompt
-                if resolved_path:
-                    enhanced_prompt = f"{prompt} [NLP_PATH:{resolved_path}]"
-                if nlp_result and nlp_result.intent != "general_query":
-                    enhanced_prompt = f"{enhanced_prompt} [NLP_INTENT:{nlp_result.intent}]"
-                
-                # Create command object
-                command = Command(
-                    type=CommandType.TEXT,
-                    content=enhanced_prompt,
-                    source="streamlit",
-                    timestamp=datetime.now()
-                )
-                
-                # Get response
+                # Use the same process_chat_message function as jarvis_streamlit.py
+                # This ensures identical email sending behavior
                 with st.spinner("JARVIS is thinking..."):
-                    response = st.session_state.jarvis.process_command(command)
+                    # Use original prompt for email commands (same as jarvis_streamlit.py)
+                    # The process_chat_message function handles everything correctly
+                    response = process_chat_message(prompt)
                 
                 # Update NLP context
                 if st.session_state.nlp_processor and nlp_result:

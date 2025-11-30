@@ -8,6 +8,8 @@ import threading
 
 from agent import fetch_recent_emails, process_email
 from emailapi import get_service, send_email, get_user_email
+from jarvis import JARVISAssistant, Command, CommandType
+from datetime import datetime
 
 
 class EmailAgentDesktop:
@@ -23,6 +25,13 @@ class EmailAgentDesktop:
         self.auto_sent_ids = []
         self.auto_sent_ids_at_start = []
         self.max_results = 10
+        
+        # Initialize JARVIS for email command processing (same as Streamlit version)
+        self.jarvis = None
+        try:
+            self.jarvis = JARVISAssistant()
+        except Exception as e:
+            print(f"Warning: Could not initialize JARVIS: {e}")
         
         # Load auto-sent IDs
         self._load_auto_sent_ids()
@@ -96,6 +105,23 @@ class EmailAgentDesktop:
         self.groq_status_label = ttk.Label(env_frame, text="GROQ_API_KEY: Not Set", 
                                           foreground="red")
         self.groq_status_label.pack(anchor="w")
+        
+        # JARVIS Command section (same as Streamlit)
+        command_frame = ttk.LabelFrame(control_frame, text="JARVIS Email Command", padding="5")
+        command_frame.pack(fill="x", pady=(0, 10))
+        
+        ttk.Label(command_frame, text="Send email via command:", font=("Arial", 9)).pack(anchor="w")
+        self.command_entry = ttk.Entry(command_frame, width=30)
+        self.command_entry.pack(fill="x", pady=(2, 5))
+        self.command_entry.insert(0, "email hi to user@example.com")
+        
+        command_btn = ttk.Button(command_frame, text="📧 Send via JARVIS", 
+                                command=self.send_via_jarvis_command)
+        command_btn.pack(fill="x", pady=(2, 0))
+        
+        ttk.Label(command_frame, text="Examples:", font=("Arial", 8), foreground="gray").pack(anchor="w", pady=(5, 0))
+        ttk.Label(command_frame, text="• email hi to user@example.com", font=("Arial", 7), foreground="gray").pack(anchor="w")
+        ttk.Label(command_frame, text="• send email to first email", font=("Arial", 7), foreground="gray").pack(anchor="w")
         
         # Status section
         status_frame = ttk.LabelFrame(control_frame, text="Status", padding="5")
@@ -262,15 +288,24 @@ class EmailAgentDesktop:
                 result["auto_skipped_self"] = True
                 return
                 
-            subject = f"Re: {email.get('subject', '')}"
+            original_subject = email.get('subject', '')
+            if not original_subject.lower().startswith('re:'):
+                subject = f"Re: {original_subject}"
+            else:
+                subject = original_subject
             body = result.get("action", "") if isinstance(result.get("action"), str) else ""
             
             if body:
-                send_email(to_addr, subject, body)
-                if msg_id:
-                    self.auto_sent_ids.append(msg_id)
-                    self._save_auto_sent_ids()
-                result["auto_sent"] = True
+                # Use JARVIS's email handling for consistency with Streamlit version
+                try:
+                    service = get_service()
+                    send_email(to_addr, subject, body, service_override=service)
+                    if msg_id:
+                        self.auto_sent_ids.append(msg_id)
+                        self._save_auto_sent_ids()
+                    result["auto_sent"] = True
+                except Exception as send_err:
+                    result["send_error"] = str(send_err)
                 
         except Exception as e:
             result["send_error"] = str(e)
@@ -384,12 +419,21 @@ class EmailAgentDesktop:
             ttk.Label(reply_frame, text="To:").grid(row=0, column=0, sticky="w", pady=(0, 5))
             to_entry = ttk.Entry(reply_frame, width=60)
             to_entry.grid(row=0, column=1, sticky="ew", pady=(0, 5))
-            to_entry.insert(0, email.get("from", ""))
+            # Extract email address from "From" field (same logic as Streamlit/JARVIS)
+            from_field = email.get("from", "")
+            email_addr = self._extract_email_address(from_field)
+            to_entry.insert(0, email_addr if email_addr else from_field)
             
             ttk.Label(reply_frame, text="Subject:").grid(row=1, column=0, sticky="w", pady=(0, 5))
             subject_entry = ttk.Entry(reply_frame, width=60)
             subject_entry.grid(row=1, column=1, sticky="ew", pady=(0, 5))
-            subject_entry.insert(0, f"Re: {email.get('subject', '')}")
+            # Handle "Re:" prefix properly (same as JARVIS logic)
+            original_subject = email.get('subject', '')
+            if not original_subject.lower().startswith('re:'):
+                reply_subject = f"Re: {original_subject}"
+            else:
+                reply_subject = original_subject
+            subject_entry.insert(0, reply_subject)
             
             ttk.Label(reply_frame, text="Body:").grid(row=2, column=0, sticky="nw", pady=(0, 5))
             body_entry = scrolledtext.ScrolledText(reply_frame, height=10, width=60)
@@ -418,19 +462,104 @@ class EmailAgentDesktop:
         }
         return colors.get(classification, "black")
         
+    def process_email_command(self, command_text: str) -> str:
+        """Process email command through JARVIS (same as Streamlit version)"""
+        try:
+            if not self.jarvis:
+                return "❌ JARVIS not initialized. Cannot process email command."
+            
+            # Create command object (same as Streamlit's process_chat_message)
+            command = Command(
+                type=CommandType.TEXT,
+                content=command_text.strip(),
+                source="desktop_app",
+                timestamp=datetime.now()
+            )
+            
+            # Process through JARVIS (same as Streamlit's process_chat_message)
+            response = self.jarvis.process_command(command)
+            
+            # Learn from this interaction (same as Streamlit)
+            self.jarvis.learn_from_interaction(command, response)
+            
+            return response
+            
+        except Exception as e:
+            return f"❌ Error processing email command: {e}"
+    
+    def send_via_jarvis_command(self):
+        """Send email via JARVIS command (same as Streamlit version)"""
+        command_text = self.command_entry.get().strip()
+        if not command_text:
+            messagebox.showwarning("Empty Command", "Please enter an email command.")
+            return
+        
+        def send_thread():
+            try:
+                self.log_status(f"Processing JARVIS command: {command_text}")
+                response = self.process_email_command(command_text)
+                self.log_status(f"JARVIS Response: {response}")
+                
+                # Show result in messagebox
+                if "sent" in response.lower() and "error" not in response.lower() and "failed" not in response.lower():
+                    messagebox.showinfo("Success", f"Email command executed successfully!\n\n{response}")
+                else:
+                    messagebox.showinfo("Result", f"Command Result:\n\n{response}")
+                    
+            except Exception as e:
+                self.log_status(f"Error processing command: {e}")
+                messagebox.showerror("Error", f"Failed to process command:\n{e}")
+        
+        threading.Thread(target=send_thread, daemon=True).start()
+    
     def send_reply(self, to_addr, subject, body):
-        """Send reply email"""
+        """Send reply email using JARVIS command processing (same as Streamlit version)"""
         if not to_addr or not subject or not body.strip():
             messagebox.showwarning("Missing Information", 
                                  "Please fill in all fields (To, Subject, Body)")
             return
+        
+        # Extract email address from "Name <email@example.com>" format (same as Streamlit/JARVIS)
+        to_addr_clean = self._extract_email_address(to_addr)
+        if not to_addr_clean:
+            messagebox.showerror("Invalid Email", f"Could not extract email address from: {to_addr}")
+            return
             
         def send_thread():
             try:
-                self.log_status(f"Sending reply to {to_addr}...")
-                response = send_email(to_addr, subject, body.strip())
-                self.log_status(f"Reply sent successfully! Message ID: {response.get('id')}")
-                messagebox.showinfo("Success", "Reply sent successfully!")
+                self.log_status(f"Sending reply to {to_addr_clean}...")
+                
+                # Use JARVIS command processing (same as Streamlit version)
+                # This uses the same handle_gmail_command logic that works in Streamlit
+                if self.jarvis:
+                    # Format command like Streamlit does: "email <message> to <address>"
+                    command_text = f"email {body.strip()} to {to_addr_clean}"
+                    response = self.process_email_command(command_text)
+                    
+                    # Check if email was sent successfully
+                    if "sent" in response.lower() and "error" not in response.lower() and "failed" not in response.lower():
+                        self.log_status(f"Reply sent successfully via JARVIS!")
+                        messagebox.showinfo("Success", f"Reply sent successfully!\n\n{response}")
+                    else:
+                        # If JARVIS command didn't work, try direct send as fallback
+                        self.log_status("JARVIS command didn't match pattern, using direct send...")
+                        service = get_service()
+                        response = send_email(to_addr_clean, subject, body.strip(), service_override=service)
+                        if response and response.get('id'):
+                            self.log_status(f"Reply sent successfully! Message ID: {response.get('id')}")
+                            messagebox.showinfo("Success", f"Reply sent successfully!\n\nTo: {to_addr_clean}\nSubject: {subject}\nMessage ID: {response.get('id')}")
+                        else:
+                            messagebox.showinfo("Success", "Reply sent successfully!")
+                else:
+                    # Fallback: direct send if JARVIS not available
+                    service = get_service()
+                    response = send_email(to_addr_clean, subject, body.strip(), service_override=service)
+                    if response and response.get('id'):
+                        self.log_status(f"Reply sent successfully! Message ID: {response.get('id')}")
+                        messagebox.showinfo("Success", f"Reply sent successfully!\n\nTo: {to_addr_clean}\nSubject: {subject}\nMessage ID: {response.get('id')}")
+                    else:
+                        messagebox.showinfo("Success", "Reply sent successfully!")
+                    
             except Exception as e:
                 self.log_status(f"Failed to send reply: {e}")
                 messagebox.showerror("Send Error", f"Failed to send reply:\n{e}")
