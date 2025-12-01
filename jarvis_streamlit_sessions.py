@@ -100,6 +100,82 @@ def process_chat_message(message: str) -> str:
         logger.error(f"Error processing chat message: {e}")
         return f"❌ Error processing message: {e}"
 
+def process_with_ai_routing(user_message: str, nlp_context: dict, jarvis, timeout_seconds: int = 60) -> str:
+    """Decide and execute actions (list files, read files, etc.) using NLP context.
+
+    Minimal routing to unblock UI: handles common file ops directly, otherwise falls back
+    to the standard chat processing.
+    """
+    try:
+        import os
+        import subprocess
+        from system_manager import JARVISSystemIntegration
+
+        action = None
+        path = None
+        if nlp_context:
+            action = (nlp_context.get("action") or "").lower()
+            intent = (nlp_context.get("intent") or "").lower()
+            path = nlp_context.get("path")
+
+            # LIST FILES
+            if action in ["list", "list_files"] or intent == "list_files":
+                if path:
+                    try:
+                        system = JARVISSystemIntegration()
+                        results = system.file_manager.list_files(path)
+                        if isinstance(results, list) and results and (not isinstance(results[0], dict) or "error" not in results[0]):
+                            out = f"📁 Files in {path}:\n\n"
+                            for f in results[:100]:
+                                icon = "📁" if f.get("is_directory") else "📄"
+                                name = f.get("name", "Unknown")
+                                size = f.get("size", 0)
+                                size_str = f" ({size} bytes)" if f.get("is_file") else ""
+                                out += f"{icon} {name}{size_str}\n"
+                            if len(results) > 100:
+                                out += f"\n... and {len(results)-100} more items"
+                            return out
+                    except Exception:
+                        pass
+
+                    # Fallback to PowerShell listing
+                    try:
+                        ps = f"powershell -Command \"Get-ChildItem -Path '{path}' | Select-Object Name,Length,LastWriteTime | Format-Table -AutoSize\""
+                        r = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=30)
+                        if r.stdout.strip():
+                            return f"```\n{r.stdout.strip()}\n```"
+                        if r.stderr.strip():
+                            return f"❌ {r.stderr.strip()}"
+                    except Exception as e:
+                        return f"❌ Error listing files: {e}"
+                else:
+                    return "❌ No directory path detected. Please specify which folder to list."
+
+            # READ FILE
+            if action in ["read", "read_file"] or intent == "read_file":
+                if path:
+                    try:
+                        ps = f"powershell -Command \"Get-Content -Raw -Path '{path}'\""
+                        r = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=30)
+                        if r.returncode == 0:
+                            content = r.stdout or ""
+                            max_len = 10000
+                            if len(content) > max_len:
+                                content = content[:max_len] + "\n...\n(truncated)"
+                            return f"```\n{content.strip()}\n```"
+                        else:
+                            err = r.stderr.strip() or "Error reading file"
+                            return f"❌ {err}"
+                    except Exception as e:
+                        return f"❌ Error reading file: {e}"
+                else:
+                    return "❌ No file path detected. Please specify which file to read."
+
+        # Fallback to regular processing
+        return process_chat_message(user_message)
+    except Exception as e:
+        return f"❌ Error: {e}"
+
 def render_sidebar():
     """Render the sidebar with chat sessions"""
     with st.sidebar:
@@ -242,13 +318,25 @@ def render_chat_interface():
         # Get JARVIS response
         if st.session_state.jarvis:
             try:
-                # Use the same process_chat_message function as jarvis_streamlit.py
-                # This ensures identical email sending behavior
+                # Use AI-driven routing so the model can decide to run commands, read files, etc.
                 with st.spinner("JARVIS is thinking..."):
-                    # Use original prompt for email commands (same as jarvis_streamlit.py)
-                    # The process_chat_message function handles everything correctly
-                    response = process_chat_message(prompt)
-                
+                    nlp_context = None
+                    if nlp_result:
+                        nlp_context = {
+                            "original": nlp_result.original_text,
+                            "normalized": nlp_result.normalized_text,
+                            "intent": nlp_result.intent,
+                            "confidence": nlp_result.confidence,
+                            "action": nlp_result.action,
+                            "entities": nlp_result.entities,
+                            "path": resolved_path,
+                            "context_summary": nlp_result.context_summary,
+                        }
+                    response = process_with_ai_routing(prompt, nlp_context, st.session_state.jarvis)
+
+                # Remember last command for retry
+                st.session_state.last_command = prompt
+
                 # Update NLP context
                 if st.session_state.nlp_processor and nlp_result:
                     st.session_state.nlp_processor.update_context(prompt, nlp_result, response)

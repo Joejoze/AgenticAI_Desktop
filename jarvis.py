@@ -1097,31 +1097,66 @@ Command:"""
         """Handle Gmail-specific commands with natural language understanding.
 
         Priority order:
-        1) Direct pattern: "email <message> to <address>" → send that email.
+        1) Smart detection: if command has email address + message text, send email
         2) Otherwise, fall back to existing logic: list emails, reply, etc.
         """
         try:
             from agent import fetch_recent_emails, process_email
             from emailapi import get_service, send_email
+            import re
 
             command_lower = command.lower()
 
-            # 1) Deterministic direct-send pattern: "email <message> to <address>"
-            import re
-            direct_send_pattern = r"^\s*email\s+(.+?)\s+to\s+([\w\.-]+@[\w\.-]+)\s*$"
-            direct_match = re.match(direct_send_pattern, command, re.IGNORECASE)
-            if direct_match:
-                message_text = direct_match.group(1).strip()
-                recipient_addr = direct_match.group(2).strip()
-                if recipient_addr and message_text:
-                    print(f"[DEBUG] Direct email pattern matched. To: {recipient_addr}, Message: {message_text}")
+            # 0) Smart email send detection: if command contains an email address and some message
+            # This handles flexible patterns like:
+            # - "send email loborostan05@gmail.com hey broo"
+            # - "email loborostan05@gmail.com hey broo"  
+            # - "send loborostan05@gmail.com hey broo"
+            # - "mail loborostan05@gmail.com hey broo"
+            # - "send email to loborostan05@gmail.com hey broo"
+            email_addr_match = re.search(r'([\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,})', command)
+            if email_addr_match:
+                recipient_addr = email_addr_match.group(1)
+                # Check if this looks like a send command (has send/email/mail keywords OR just has email + text)
+                send_keywords = ['send', 'email', 'mail', 'write', 'compose', 'message']
+                has_send_intent = any(kw in command_lower for kw in send_keywords)
+                
+                # Extract the message: everything after the email address
+                after_email = command[email_addr_match.end():].strip()
+                # Also check for message before email (e.g., "email hey broo to addr@x.com")
+                before_email = command[:email_addr_match.start()].strip()
+                # Remove send/email/mail/to keywords from before part to get message
+                before_cleaned = re.sub(r'^(send\s+)?(email|mail|e-mail)?\s*(to\s+)?', '', before_email, flags=re.IGNORECASE).strip()
+                
+                # Determine message text
+                if after_email and len(after_email) > 1:
+                    message_text = after_email
+                elif before_cleaned and len(before_cleaned) > 1:
+                    message_text = before_cleaned
+                else:
+                    message_text = None
+                
+                # If we have both recipient and message, and there's send intent, send the email
+                if message_text and has_send_intent:
+                    print(f"[DEBUG] Smart email detection. To: {recipient_addr}, Message: {message_text}")
+                    
+                    # Use AI to elaborate the message if it's short/casual
+                    if len(message_text.split()) < 20:
+                        try:
+                            elaborated = self._elaborate_email_message(message_text, recipient_addr)
+                            if elaborated:
+                                message_text = elaborated
+                                print(f"[DEBUG] Elaborated message: {message_text[:100]}...")
+                        except Exception as e:
+                            print(f"[DEBUG] Could not elaborate message: {e}")
+                    
                     service = get_service()
                     subject = "Message from JARVIS"
                     result = send_email(recipient_addr, subject, message_text, service_override=service)
                     if result:
-                        return f"Email sent to {recipient_addr}: {message_text}"
+                        return f"✅ Email sent successfully to {recipient_addr}!\n\nMessage:\n{message_text}\n\nMessage ID: {result.get('id', 'Unknown')}"
                     else:
-                        return f"Failed to send email to {recipient_addr}"
+                        return f"❌ Failed to send email to {recipient_addr}"
 
             # 1.5) Pattern: "send email to [first/second/third/N] email" or "send email to email [N]"
             send_to_email_pattern = r"send\s+(?:email|emil|mail)\s+to\s+(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|\d+)(?:\s+email)?"
@@ -1436,6 +1471,52 @@ Generate only the reply text, nothing else:"""
                 return "Thank you for your email. I'll get back to you with more information soon."
             else:
                 return "Thank you for your email. I've received your message and will respond accordingly."
+    
+    def _elaborate_email_message(self, short_message: str, recipient_email: str) -> str:
+        """Elaborate a short/casual message into a proper email using AI.
+        
+        For example: "hey bro how are you" -> "Hey! Hope you're doing well. Just wanted to check in and see how things are going with you. Let me know if you'd like to catch up sometime!"
+        """
+        try:
+            # Extract recipient name from email if possible
+            recipient_name = recipient_email.split('@')[0] if recipient_email else "there"
+            
+            self._safe_print(f"[DEBUG] Elaborating message: {short_message}")
+            
+            prompt = f"""You are helping compose an email. The user wants to send a casual/short message and needs it elaborated into a proper, friendly email.
+
+Original message: "{short_message}"
+Recipient email: {recipient_email}
+
+Instructions:
+- Expand the short message into a natural, friendly email (3-5 sentences)
+- Keep the same tone and intent as the original message
+- If it's a greeting like "hey bro how are you", make it warm and friendly
+- If it's a question, elaborate it properly
+- If it's casual, keep it casual but make it complete
+- Don't be overly formal - match the original tone
+- Don't add unnecessary fluff or be too wordy
+- Don't include subject line, greetings like "Dear X" or sign-offs - just the body text
+
+Generate only the elaborated message text, nothing else:"""
+            
+            response = self._call_llm(prompt).strip()
+            
+            # Clean up the response
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            if response.startswith("'") and response.endswith("'"):
+                response = response[1:-1]
+            
+            # Clean generated message
+            response = self._clean_unicode_text(response)
+            
+            self._safe_print(f"[DEBUG] Elaborated message: {response[:150]}...")
+            return response if response else short_message
+            
+        except Exception as e:
+            self._safe_print(f"[DEBUG] Failed to elaborate message: {e}")
+            return short_message  # Return original if elaboration fails
     
     def start_voice_mode(self):
         """Start continuous voice interaction"""
