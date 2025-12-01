@@ -122,6 +122,8 @@ class EmailAgentDesktop:
         ttk.Label(command_frame, text="Examples:", font=("Arial", 8), foreground="gray").pack(anchor="w", pady=(5, 0))
         ttk.Label(command_frame, text="• email hi to user@example.com", font=("Arial", 7), foreground="gray").pack(anchor="w")
         ttk.Label(command_frame, text="• send email to first email", font=("Arial", 7), foreground="gray").pack(anchor="w")
+        ttk.Label(command_frame, text="• reply to 1", font=("Arial", 7), foreground="gray").pack(anchor="w")
+        ttk.Label(command_frame, text="• reply to first email", font=("Arial", 7), foreground="gray").pack(anchor="w")
         
         # Status section
         status_frame = ttk.LabelFrame(control_frame, text="Status", padding="5")
@@ -230,6 +232,10 @@ class EmailAgentDesktop:
                 # Load emails
                 emails_loaded = fetch_recent_emails(get_service(), max_results=self.max_results)
                 self.emails = emails_loaded
+                
+                # Set current_emails for JARVIS (required for reply functionality)
+                if self.jarvis:
+                    self.jarvis.current_emails = emails_loaded
                 
                 self.log_status(f"Loaded {len(emails_loaded)} emails")
                 
@@ -497,7 +503,16 @@ class EmailAgentDesktop:
         def send_thread():
             try:
                 self.log_status(f"Processing JARVIS command: {command_text}")
-                response = self.process_email_command(command_text)
+                
+                # Check if it's a "reply to" command that needs email context
+                command_lower = command_text.lower()
+                if command_lower.startswith("reply to"):
+                    # Handle reply to numbered email
+                    response = self._handle_reply_command(command_text)
+                else:
+                    # Regular email command processing
+                    response = self.process_email_command(command_text)
+                
                 self.log_status(f"JARVIS Response: {response}")
                 
                 # Show result in messagebox
@@ -511,6 +526,36 @@ class EmailAgentDesktop:
                 messagebox.showerror("Error", f"Failed to process command:\n{e}")
         
         threading.Thread(target=send_thread, daemon=True).start()
+    
+    def _handle_reply_command(self, command: str) -> str:
+        """Handle reply to numbered email command (e.g., 'reply to 1' or 'reply to first email')"""
+        try:
+            if not self.jarvis:
+                return "❌ JARVIS not initialized. Cannot process reply command."
+            
+            # Make sure emails are loaded
+            if not self.emails:
+                # Try to load emails if not already loaded
+                try:
+                    service = get_service()
+                    self.emails = fetch_recent_emails(service, max_results=10)
+                    if not self.emails:
+                        return "❌ No emails loaded. Please load emails first."
+                except Exception as e:
+                    return f"❌ Failed to load emails: {e}"
+            
+            # Set current_emails for JARVIS (same as Streamlit)
+            # This is required for JARVIS to access the email list
+            self.jarvis.current_emails = self.emails
+            
+            # Process through JARVIS's handle_gmail_command (same as Streamlit)
+            # This will generate a smart reply based on the email body if no message is provided
+            response = self.jarvis.handle_gmail_command(command)
+            
+            return response
+            
+        except Exception as e:
+            return f"❌ Error processing reply command: {e}"
     
     def send_reply(self, to_addr, subject, body):
         """Send reply email using JARVIS command processing (same as Streamlit version)"""

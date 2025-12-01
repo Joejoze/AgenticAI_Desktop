@@ -1049,6 +1049,26 @@
       "classification": "command.",
       "action_taken": "Based on the memory context and the classification as a command, I'll respond accordingly.\n\nYou previously mentioned replying to an email and interacting with Glassdoor. However, there is no clear indication of which email to reply to. To clarify, I'll ask for more information.\n\nAre you referring to the first email in your inbox, or the first email in a conversation sequence? Additionally, which Glassdoor interaction are you referring to?",
       "importance": 0.5
+    },
+    {
+      "id": "mem_20251201_095825_-7684864731309479860",
+      "timestamp": "2025-12-01T09:58:25.631253",
+      "sender": "streamlit_chat",
+      "subject": "send hi to rhugvedmane28@gmail.com",
+      "content": "send hi to rhugvedmane28@gmail.com",
+      "classification": "command",
+      "action_taken": "Okay, sending 'hi' to rhugvedmane28@gmail.com.",
+      "importance": 0.5
+    },
+    {
+      "id": "mem_20251201_095844_4750940156000407165",
+      "timestamp": "2025-12-01T09:58:44.623162",
+      "sender": "streamlit_chat",
+      "subject": "reply to 4",
+      "content": "reply to 4",
+      "classification": "command",
+      "action_taken": "What would you like to say in the reply to email number 4?",
+      "importance": 0.5
     }
   ]
 }

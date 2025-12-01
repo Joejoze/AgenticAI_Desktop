@@ -1247,27 +1247,71 @@ Command:"""
                 return response
 
             elif command_lower.startswith("reply to "):
-                # Placeholder simple reply handler to keep indentation correct.
-                # Full smart reply logic can be re-added later if needed.
+                # Smart reply handler that generates contextual replies based on email body
                 if not self.current_emails:
                     return "ERROR: No emails loaded. Please run 'check emails' first."
 
-                # Very simple pattern: "reply to N your message here"
                 import re
-                m = re.match(r"reply to\s+(\d+)\s+(.+)", command_lower)
-                if not m:
-                    return "Reply format: reply to [email_number] [your message]. Example: reply to 1 thanks for the update"
+                # Support patterns: "reply to 1", "reply to first", "reply to 1st email/mail", "reply to 1 your message"
+                ordinal_map = {
+                    "first": 1, "1st": 1, "1": 1,
+                    "second": 2, "2nd": 2, "2": 2,
+                    "third": 3, "3rd": 3, "3": 3,
+                    "fourth": 4, "4th": 4, "4": 4,
+                    "fifth": 5, "5th": 5, "5": 5
+                }
+                
+                # Try to match "reply to N" or "reply to first/second/etc" with optional "email" or "mail"
+                # Pattern: "reply to [the] [first/1st/1] [email/mail] [optional message]"
+                ordinal_match = re.search(r"reply to\s+(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|\d+)(?:\s+(?:email|mail))?", command_lower)
+                if ordinal_match:
+                    # Extract the ordinal part
+                    match_text = ordinal_match.group(0)
+                    ordinal_str = re.sub(r"reply to\s+(?:the\s+)?", "", match_text, flags=re.IGNORECASE)
+                    ordinal_str = re.sub(r"\s+(?:email|mail)", "", ordinal_str, flags=re.IGNORECASE).strip()
+                    
+                    email_index = ordinal_map.get(ordinal_str.lower(), int(ordinal_str) if ordinal_str.isdigit() else 1) - 1
+                    
+                    # Check if there's a custom message after the email number/mail
+                    # Look for text after "reply to [ordinal] [email/mail]"
+                    remaining_text = command[ordinal_match.end():].strip()
+                    
+                    # Check if remaining text is actually a message (not just whitespace or very short)
+                    if remaining_text and len(remaining_text.strip()) > 2:
+                        # Custom message provided; clean it to avoid encoding issues
+                        message = self._clean_unicode_text(remaining_text.strip())
+                        self._safe_print(f"[DEBUG] Using custom message: {message[:50]}...")
+                    else:
+                        # No message provided - generate smart reply based on email body using AI
+                        self._safe_print(f"[DEBUG] No message provided, generating AI reply based on email {email_index + 1} body")
+                        if email_index < 0 or email_index >= len(self.current_emails):
+                            return f"ERROR: Invalid email reference. Please choose between 1 and {len(self.current_emails)}"
+                        
+                        target_email = self.current_emails[email_index]
+                        preview = target_email.get('body', '')[:100]
+                        self._safe_print(f"[DEBUG] Email body preview: {preview}...")
+                        message = self.generate_smart_reply(target_email)
+                        self._safe_print(f"[DEBUG] Generated AI reply: {message[:100]}...")
+                else:
+                    # Try old pattern: "reply to N your message here" (must have message)
+                    m = re.match(r"reply to\s+(\d+)\s+(.+)", command_lower)
+                    if m:
+                        email_index = int(m.group(1)) - 1
+                        # Old pattern with explicit message; clean it
+                        message = self._clean_unicode_text(command[m.start(2):].strip())
+                        self._safe_print(f"[DEBUG] Using old pattern with message: {message[:50]}...")
+                    else:
+                        return "Reply format: reply to [1/first/1st] [your message]. Example: reply to 1 thanks for the update\nOr just: reply to 1 (will generate AI reply based on email body)"
 
-                index = int(m.group(1)) - 1
-                message = command[m.start(2):].strip()  # use original case for message
-
-                if index < 0 or index >= len(self.current_emails):
+                # Validate email index (if not already validated above)
+                if 'email_index' not in locals() or email_index < 0 or email_index >= len(self.current_emails):
                     return f"ERROR: Invalid email reference. Please choose between 1 and {len(self.current_emails)}"
 
-                target_email = self.current_emails[index]
-                from_field = target_email['from']
+                # Get target email (if not already retrieved above)
+                if 'target_email' not in locals():
+                    target_email = self.current_emails[email_index]
+                from_field = target_email.get('from', '')
                 # Extract email address from "Name <email@example.com>" or just "email@example.com"
-                import re
                 email_match = re.search(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", from_field)
                 from_addr = email_match.group(1) if email_match else from_field
                 
@@ -1277,8 +1321,21 @@ Command:"""
                 else:
                     reply_subject = original_subject
 
-                resp = send_email(from_addr, reply_subject, message)
-                return f"Reply sent successfully to {from_addr}!\nSubject: {reply_subject}\nMessage: {message}\nMessage ID: {resp.get('id', 'Unknown')}"
+                # Clean the reply message one last time before sending
+                message = self._clean_unicode_text(message)
+
+                # Send the email using the same logic as Streamlit
+                service = get_service()
+                self._safe_print(f"[DEBUG] Sending reply to {from_addr}")
+                self._safe_print(f"[DEBUG] Subject: {reply_subject}")
+                self._safe_print(f"[DEBUG] Message: {message[:100]}...")
+                
+                resp = send_email(from_addr, reply_subject, message, service_override=service)
+                
+                if resp and resp.get('id'):
+                    return f"✅ Reply sent successfully to {from_addr}!\n\nSubject: {reply_subject}\n\nMessage: {message}\n\nMessage ID: {resp.get('id')}"
+                else:
+                    return f"⚠️ Reply may have been sent, but no confirmation received.\n\nTo: {from_addr}\nSubject: {reply_subject}\nMessage: {message}"
 
             # If nothing matched, fall back to help text
             return (
@@ -1291,32 +1348,84 @@ Command:"""
         except Exception as e:
             return f"Gmail operation error: {str(e)}"
     
+    def _clean_unicode_text(self, text: str) -> str:
+        """Clean text of problematic Unicode characters that cause encoding issues"""
+        if not text:
+            return ""
+        try:
+            import unicodedata
+            # Remove combining marks and invisible characters
+            cleaned = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
+            cleaned = cleaned.replace('\u200b', '').replace('\u200c', '').replace('\u200d', '').replace('\ufeff', '')
+            return cleaned.encode('utf-8', errors='ignore').decode('utf-8')
+        except Exception:
+            return text.encode('utf-8', errors='ignore').decode('utf-8')
+
+    def _safe_print(self, text: str) -> None:
+        """Print text safely on Windows consoles that may not support all Unicode characters"""
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            try:
+                safe = str(text).encode('utf-8', errors='ignore').decode('utf-8')
+                print(safe)
+            except Exception:
+                print("[LOG OUTPUT WITH UNPRINTABLE UNICODE CHARACTERS]")
+
     def generate_smart_reply(self, email: dict) -> str:
-        """Generate a smart reply suggestion based on email content"""
+        """Generate a smart reply suggestion based on email content using AI"""
         try:
             subject = email.get('subject', '')
             body = email.get('body', '')
             sender = email.get('from', '')
-            sender_name = sender.split('<')[0].strip()
+            sender_name = sender.split('<')[0].strip() if '<' in sender else sender.split('@')[0]
             
-            # Use AI to generate a contextual reply
-            prompt = f"""
-            Generate a brief, professional reply to this email:
+            # Clean email fields to avoid problematic chars in logs
+            subject = self._clean_unicode_text(subject)
+            body = self._clean_unicode_text(body)
+            sender = self._clean_unicode_text(sender)
             
-            From: {sender}
-            Subject: {subject}
-            Content: {body[:500]}...
+            # Get full email body (not just snippet) if available
+            full_body = body
+            if len(body) < 100:  # If body is too short, it might be just a snippet
+                full_body = body
             
-            Generate a short, appropriate reply (1-2 sentences). Be polite and professional.
-            If it's spam, suggest declining politely.
-            If it's a question, provide a helpful answer.
-            If it's a notification, acknowledge receipt.
+            self._safe_print(f"[DEBUG] Generating AI reply for email from {sender_name}")
+            self._safe_print(f"[DEBUG] Subject: {subject}")
+            self._safe_print(f"[DEBUG] Body length: {len(full_body)} chars")
             
-            Reply:
-            """
+            # Use AI to generate a contextual reply based on the email body
+            prompt = f"""You received an email. Generate a brief, professional, and contextual reply based on the email content.
+
+From: {sender}
+Subject: {subject}
+Email Body: {full_body[:800]}
+
+Instructions:
+- Read and understand the email content
+- Generate an appropriate reply (2-3 sentences)
+- Be polite, professional, and contextual
+- Address the main point or question if there is one
+- If it's a greeting, respond warmly
+- If it's spam or promotional, politely decline
+- If it's a question, provide a helpful answer
+- If it's a notification, acknowledge receipt
+
+Generate only the reply text, nothing else:"""
             
             response = self._call_llm(prompt).strip()
-            return response
+            
+            # Clean up the response (remove quotes if wrapped)
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            if response.startswith("'") and response.endswith("'"):
+                response = response[1:-1]
+
+            # Clean generated reply before logging/sending
+            response = self._clean_unicode_text(response)
+            
+            self._safe_print(f"[DEBUG] Generated AI reply: {response[:150]}...")
+            return response if response else "Thank you for your email. I'll get back to you soon."
             
         except Exception as e:
             # Fallback suggestions based on email type
