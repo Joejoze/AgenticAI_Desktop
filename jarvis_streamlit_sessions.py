@@ -155,6 +155,30 @@ def process_with_ai_routing(user_message: str, nlp_context: dict, jarvis, timeou
             if action in ["read", "read_file"] or intent == "read_file":
                 if path:
                     try:
+                        # Check if path is a directory - if so, list files instead
+                        if os.path.isdir(path):
+                            # Redirect to list files for directories
+                            system = JARVISSystemIntegration()
+                            results = system.file_manager.list_files(path)
+                            if isinstance(results, list) and results:
+                                out = f"📁 '{path}' is a directory. Contents:\n\n"
+                                for f in results[:100]:
+                                    icon = "📁" if f.get("is_directory") else "📄"
+                                    name = f.get("name", "Unknown")
+                                    size = f.get("size", 0)
+                                    size_str = f" ({size} bytes)" if f.get("is_file") else ""
+                                    out += f"{icon} {name}{size_str}\n"
+                                if len(results) > 100:
+                                    out += f"\n... and {len(results)-100} more items"
+                                return out
+                            else:
+                                # Fallback to PowerShell listing
+                                ps = f"powershell -Command \"Get-ChildItem -Path '{path}' | Select-Object Name,Length,LastWriteTime | Format-Table -AutoSize\""
+                                r = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=30)
+                                if r.stdout.strip():
+                                    return f"📁 '{path}' is a directory. Contents:\n```\n{r.stdout.strip()}\n```"
+                        
+                        # It's a file - read it
                         ps = f"powershell -Command \"Get-Content -Raw -Path '{path}'\""
                         r = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=30)
                         if r.returncode == 0:

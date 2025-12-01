@@ -794,8 +794,14 @@ class SystemController:
     """Control system operations"""
     
     @staticmethod
-    def execute_command(command: str, shell: bool = True) -> Dict[str, Any]:
-        """Execute system command safely"""
+    def execute_command(command: str, shell: bool = True, show_command: bool = False) -> Dict[str, Any]:
+        """Execute system command safely
+        
+        Args:
+            command: The command to execute
+            shell: Whether to use shell execution
+            show_command: If False (default), don't include command in output
+        """
         try:
             result = subprocess.run(
                 command,
@@ -805,12 +811,18 @@ class SystemController:
                 timeout=30
             )
             
-            return {
+            response = {
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "return_code": result.returncode
             }
+            
+            # Only include command if explicitly requested
+            if show_command:
+                response["command"] = command
+            
+            return response
             
         except subprocess.TimeoutExpired:
             return {"error": "Command timed out"}
@@ -819,8 +831,13 @@ class SystemController:
             return {"error": str(e)}
     
     @staticmethod
-    def execute_powershell_command(command: str) -> Dict[str, Any]:
-        """Execute PowerShell command safely"""
+    def execute_powershell_command(command: str, show_command: bool = False) -> Dict[str, Any]:
+        """Execute PowerShell command safely
+        
+        Args:
+            command: The PowerShell command to execute
+            show_command: If False (default), don't include command in output
+        """
         try:
             # Use PowerShell with proper execution policy
             ps_command = f"powershell.exe -ExecutionPolicy Bypass -Command \"{command}\""
@@ -832,14 +849,19 @@ class SystemController:
                 timeout=60
             )
             
-            return {
+            response = {
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "return_code": result.returncode,
-                "command": command,
-                "powershell_command": ps_command
+                "return_code": result.returncode
             }
+            
+            # Only include command details if explicitly requested
+            if show_command:
+                response["command"] = command
+                response["powershell_command"] = ps_command
+            
+            return response
             
         except subprocess.TimeoutExpired:
             return {"error": "PowerShell command timed out after 60 seconds"}

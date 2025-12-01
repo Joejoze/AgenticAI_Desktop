@@ -1,1 +1,20 @@
-{}
+{
+  "system_preferences": [
+    {
+      "command": "system health",
+      "timestamp": "2025-12-01T13:18:02.999371"
+    },
+    {
+      "command": "system health",
+      "timestamp": "2025-12-01T13:18:02.999371"
+    },
+    {
+      "command": "system health",
+      "timestamp": "2025-12-01T13:22:35.410383"
+    },
+    {
+      "command": "system health",
+      "timestamp": "2025-12-01T13:22:35.410383"
+    }
+  ]
+}
